@@ -12,7 +12,11 @@ export default {
     typescript: 'typescript',
   },
   dependencies: [
-    'commander',
+    {
+      name: 'chokidar',
+      // strip sourcemap comment
+      prettier: true,
+    },
     {
       name: 'rslog',
       afterBundle(task) {

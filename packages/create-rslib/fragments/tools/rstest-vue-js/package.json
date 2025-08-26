@@ -1,0 +1,12 @@
+{
+  "scripts": {
+    "test": "rstest"
+  },
+  "devDependencies": {
+    "@rstest/core": "^0.2.2",
+    "@testing-library/jest-dom": "^6.8.0",
+    "@testing-library/vue": "^8.1.0",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^26.1.0"
+  }
+}

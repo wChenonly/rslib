@@ -1,16 +1,17 @@
 import fs from 'node:fs';
 import fsP from 'node:fs/promises';
-import path from 'node:path';
-import color from 'picocolors';
+import path, { isAbsolute, join } from 'node:path';
+import type { RsbuildPlugins } from '@rsbuild/core';
 
-import type { LibConfig, PkgJson } from '../types';
+import type { Format, LibConfig, PkgJson } from '../types';
+import { color } from './color';
 import { logger } from './logger';
 
 /**
  * Node.js built-in modules.
  * Copied from https://github.com/webpack/webpack/blob/dd44b206a9c50f4b4cb4d134e1a0bd0387b159a3/lib/node/NodeTargetPlugin.js#L12-L72
  */
-export const nodeBuiltInModules: Array<string | RegExp> = [
+export const nodeBuiltInModules: (string | RegExp)[] = [
   'assert',
   'assert/strict',
   'async_hooks',
@@ -108,17 +109,23 @@ export async function calcLongestCommonPath(
   return lca;
 }
 
+export function getAbsolutePath(base: string, filepath: string): string {
+  return isAbsolute(filepath) ? filepath : join(base, filepath);
+}
+
 export const readPackageJson = (rootPath: string): undefined | PkgJson => {
   const pkgJsonPath = path.join(rootPath, './package.json');
 
   if (!fs.existsSync(pkgJsonPath)) {
-    logger.warn(`package.json does not exist in the ${rootPath} directory`);
+    logger.warn(
+      `The \`package.json\` file does not exist in the ${rootPath} directory`,
+    );
     return;
   }
 
   try {
     return JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
-  } catch (err) {
+  } catch (_err) {
     logger.warn(`Failed to parse ${pkgJsonPath}, it might not be valid JSON`);
     return;
   }
@@ -133,7 +140,7 @@ export const isEmptyObject = (obj: object): boolean => {
 
 export function pick<T, U extends keyof T>(
   obj: T,
-  keys: ReadonlyArray<U>,
+  keys: readonly U[],
 ): Pick<T, U> {
   return keys.reduce(
     (ret, key) => {
@@ -163,11 +170,14 @@ export function omit<T extends object, U extends keyof T>(
 }
 
 export function isPluginIncluded(
-  config: LibConfig,
   pluginName: string,
+  plugins?: RsbuildPlugins,
 ): boolean {
   return Boolean(
-    config.plugins?.some((plugin) => {
+    plugins?.some((plugin) => {
+      if (Array.isArray(plugin)) {
+        return isPluginIncluded(pluginName, plugin);
+      }
       if (typeof plugin === 'object' && plugin !== null && 'name' in plugin) {
         return plugin.name === pluginName;
       }
@@ -176,13 +186,20 @@ export function isPluginIncluded(
   );
 }
 
-export function checkMFPlugin(config: LibConfig): boolean {
+export function checkMFPlugin(
+  config: LibConfig,
+  sharedPlugins?: RsbuildPlugins,
+): boolean {
   if (config.format !== 'mf') {
     return true;
   }
 
   // https://github.com/module-federation/core/blob/4e5c4b96ee45899f3ba5904b8927768980d5ad0e/packages/rsbuild-plugin/src/cli/index.ts#L17
-  const added = isPluginIncluded(config, 'rsbuild:module-federation-enhanced');
+  const added = isPluginIncluded('rsbuild:module-federation-enhanced', [
+    ...(sharedPlugins || []),
+    ...(config.plugins || []),
+  ]);
+
   if (!added) {
     logger.warn(
       `${color.green('format: "mf"')} should be used with ${color.blue(
@@ -194,4 +211,38 @@ export function checkMFPlugin(config: LibConfig): boolean {
   return added;
 }
 
-export { color };
+export function debounce<T extends (...args: any[]) => void>(
+  func: T,
+  wait: number,
+): (...args: Parameters<T>) => void {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  return (...args: Parameters<T>) => {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+
+    timeoutId = setTimeout(() => {
+      func(...args);
+    }, wait);
+  };
+}
+
+/**
+ * Check if running in a TTY context
+ */
+export const isTTY = (type: 'stdin' | 'stdout' = 'stdout'): boolean => {
+  return (
+    (type === 'stdin' ? process.stdin.isTTY : process.stdout.isTTY) &&
+    !process.env.CI
+  );
+};
+
+export const isIntermediateOutputFormat = (format: Format): boolean => {
+  return format === 'cjs' || format === 'esm';
+};
+
+const windowsSlashRegex = /\\/g;
+export function normalizeSlash(p: string): string {
+  return p.replace(windowsSlashRegex, '/');
+}

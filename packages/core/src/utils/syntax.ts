@@ -1,4 +1,4 @@
-import type { RsbuildConfig, Rspack } from '@rsbuild/core';
+import type { EnvironmentConfig, Rspack } from '@rsbuild/core';
 import type {
   EcmaScriptVersion,
   FixedEcmaVersions,
@@ -26,10 +26,6 @@ export const LATEST_TARGET_VERSIONS: Record<
 };
 
 const calcEsnextBrowserslistByTarget = (target: RsbuildConfigOutputTarget) => {
-  if (!target) {
-    return [...LATEST_TARGET_VERSIONS.node, ...LATEST_TARGET_VERSIONS.web];
-  }
-
   if (target === 'node') {
     return LATEST_TARGET_VERSIONS.node;
   }
@@ -52,7 +48,7 @@ const RSPACK_TARGET_UNLISTED_MODERN_ECMA_VERSIONS: EcmaScriptVersion[] = [
  */
 export const ESX_TO_BROWSERSLIST: Record<
   FixedEcmaVersions,
-  Record<string, string | string[]>
+  Record<string, string>
 > &
   Record<LatestEcmaVersions, (target: RsbuildConfigOutputTarget) => string[]> =
   {
@@ -195,8 +191,10 @@ export function transformSyntaxToRspackTarget(
 
 export function transformSyntaxToBrowserslist(
   syntax: Syntax,
-  target?: NonNullable<RsbuildConfig['output']>['target'],
-): NonNullable<NonNullable<RsbuildConfig['output']>['overrideBrowserslist']> {
+  target: NonNullable<EnvironmentConfig['output']>['target'],
+): NonNullable<
+  NonNullable<EnvironmentConfig['output']>['overrideBrowserslist']
+> {
   const handleSyntaxItem = (
     syntaxItem: EcmaScriptVersion | string,
   ): string[] => {

@@ -1,14 +1,14 @@
 {
   "name": "rsbuild-plugin-dts",
-  "version": "0.0.13",
-  "description": "Dts plugin for Rsbuild",
-  "homepage": "https://lib.rsbuild.dev",
+  "version": "0.12.2",
+  "description": "Rsbuild plugin that supports emitting declaration files for TypeScript.",
+  "homepage": "https://rslib.rs",
   "bugs": {
     "url": "https://github.com/web-infra-dev/rslib/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/web-infra-dev/rslib",
+    "url": "git+https://github.com/web-infra-dev/rslib.git",
     "directory": "packages/plugin-dts"
   },
   "license": "MIT",
@@ -26,19 +26,23 @@
   ],
   "scripts": {
     "build": "rslib build",
-    "dev": "rslib build --watch"
+    "dev": "rslib build --watch",
+    "test": "rstest"
   },
   "dependencies": {
-    "magic-string": "^0.30.12",
+    "@ast-grep/napi": "0.37.0",
+    "magic-string": "^0.30.18",
     "picocolors": "1.1.1",
-    "tinyglobby": "^0.2.9"
+    "tinyglobby": "^0.2.14",
+    "tsconfig-paths": "^4.2.0"
   },
   "devDependencies": {
-    "@microsoft/api-extractor": "^7.47.11",
-    "@rsbuild/core": "~1.0.17",
+    "@microsoft/api-extractor": "^7.52.11",
+    "@rsbuild/core": "1.5.0-rc.0",
     "@rslib/tsconfig": "workspace:*",
-    "rslib": "npm:@rslib/core@0.0.13",
-    "typescript": "^5.6.3"
+    "rsbuild-plugin-publint": "^0.3.3",
+    "rslib": "npm:@rslib/core@0.12.2",
+    "typescript": "^5.9.2"
   },
   "peerDependencies": {
     "@microsoft/api-extractor": "^7",
@@ -54,11 +58,10 @@
     }
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.12.0"
   },
   "publishConfig": {
     "access": "public",
-    "provenance": true,
     "registry": "https://registry.npmjs.org/"
   }
 }

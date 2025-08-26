@@ -1,14 +1,14 @@
 {
   "name": "@rslib/core",
-  "version": "0.0.13",
-  "description": "The Rspack-based library build tool.",
-  "homepage": "https://lib.rsbuild.dev",
+  "version": "0.12.2",
+  "description": "The Rsbuild-based library development tool.",
+  "homepage": "https://rslib.rs",
   "bugs": {
     "url": "https://github.com/web-infra-dev/rslib/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/web-infra-dev/rslib",
+    "url": "git+https://github.com/web-infra-dev/rslib.git",
     "directory": "packages/core"
   },
   "license": "MIT",
@@ -17,6 +17,9 @@
     ".": {
       "types": "./dist-types/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./types": {
+      "types": "./types.d.ts"
     },
     "./package.json": "./package.json"
   },
@@ -29,31 +32,36 @@
     "bin",
     "dist",
     "dist-types",
-    "compiled"
+    "compiled",
+    "types.d.ts"
   ],
   "scripts": {
     "build": "rslib build",
     "dev": "rslib build --watch",
-    "prebundle": "prebundle"
+    "prebundle": "prebundle",
+    "test": "rstest",
+    "type-check": "tsc --noEmit && tsc --noEmit -p tests"
   },
   "dependencies": {
-    "@rsbuild/core": "~1.0.17",
+    "@rsbuild/core": "1.5.0-rc.0",
     "rsbuild-plugin-dts": "workspace:*",
-    "tinyglobby": "^0.2.9"
+    "tinyglobby": "^0.2.14"
   },
   "devDependencies": {
+    "@module-federation/rsbuild-plugin": "^0.18.3",
     "@rslib/tsconfig": "workspace:*",
-    "@rspack/core": "1.0.8",
     "@types/fs-extra": "^11.0.4",
-    "commander": "^12.1.0",
-    "fs-extra": "^11.2.0",
-    "memfs": "^4.14.0",
+    "cac": "^6.7.14",
+    "chokidar": "^4.0.3",
+    "fs-extra": "^11.3.1",
+    "memfs": "^4.38.1",
     "picocolors": "1.1.1",
-    "prebundle": "1.2.2",
-    "rslib": "npm:@rslib/core@0.0.13",
-    "rslog": "^1.2.3",
-    "tsconfck": "3.1.4",
-    "typescript": "^5.6.3"
+    "prebundle": "1.4.1",
+    "rsbuild-plugin-publint": "^0.3.3",
+    "rslib": "npm:@rslib/core@0.12.2",
+    "rslog": "^1.2.11",
+    "tsconfck": "3.1.6",
+    "typescript": "^5.9.2"
   },
   "peerDependencies": {
     "@microsoft/api-extractor": "^7",
@@ -68,11 +76,10 @@
     }
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.12.0"
   },
   "publishConfig": {
     "access": "public",
-    "provenance": true,
     "registry": "https://registry.npmjs.org/"
   }
 }

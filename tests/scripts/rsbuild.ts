@@ -39,7 +39,7 @@ function isPortAvailable(port: number) {
         resolve(false);
       });
     });
-  } catch (err) {
+  } catch (_err) {
     return false;
   }
 }
@@ -71,9 +71,6 @@ const updateConfigForTest = async (
   });
 
   const baseConfig: RsbuildConfig = {
-    dev: {
-      progressBar: false,
-    },
     server: {
       // make port random to avoid conflict
       port: await getRandomPort(),
@@ -89,7 +86,9 @@ const updateConfigForTest = async (
 };
 
 const createRsbuild = async (
-  rsbuildOptions: CreateRsbuildOptions,
+  rsbuildOptions: CreateRsbuildOptions & {
+    rsbuildConfig?: RsbuildConfig;
+  },
   plugins: RsbuildPlugins = [],
 ) => {
   const { createRsbuild: createRsbuildInner } = await import('@rsbuild/core');
@@ -110,6 +109,7 @@ export async function dev({
   ...options
 }: CreateRsbuildOptions & {
   plugins?: RsbuildPlugins;
+  rsbuildConfig?: RsbuildConfig;
   /**
    * Playwright Page instance.
    * This method will automatically goto the page.
@@ -118,6 +118,7 @@ export async function dev({
 }) {
   process.env.NODE_ENV = 'development';
 
+  options.callerName = 'rslib';
   options.rsbuildConfig = await updateConfigForTest(
     options.rsbuildConfig || {},
     options.cwd,

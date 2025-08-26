@@ -1,3 +1,4 @@
+import { pluginPublint } from 'rsbuild-plugin-publint';
 import { defineConfig } from 'rslib';
 
 export default defineConfig({
@@ -5,7 +6,7 @@ export default defineConfig({
     {
       format: 'esm',
       bundle: false,
-      syntax: ['node 16'],
+      syntax: ['node 18.12.0'],
       dts: {
         bundle: false,
       },
@@ -16,7 +17,5 @@ export default defineConfig({
       index: ['./src/**'],
     },
   },
-  output: {
-    target: 'node',
-  },
+  plugins: [pluginPublint()],
 });

@@ -1,6 +1,6 @@
 [
-  "bundle",
   "format",
+  "bundle",
   "auto-extension",
   "auto-external",
   "redirect",
@@ -10,5 +10,7 @@
   "footer",
   "dts",
   "shims",
-  "umd-name"
+  "id",
+  "umd-name",
+  "out-base"
 ]

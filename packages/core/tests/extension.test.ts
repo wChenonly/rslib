@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, rs } from '@rstest/core';
 import type { Format, PkgJson } from '../src/types';
 import { getDefaultExtension } from '../src/utils/extension';
 
@@ -8,13 +8,15 @@ type Options = {
   autoExtension: boolean;
 };
 
-vi.mock('rslog');
+rs.mock('rslog');
 
 describe('should get extension correctly', () => {
   it('autoExtension is false', () => {
     const options: Options = {
       format: 'cjs',
-      pkgJson: {},
+      pkgJson: {
+        name: 'foo',
+      },
       autoExtension: false,
     };
 
@@ -44,6 +46,7 @@ describe('should get extension correctly', () => {
     const options: Options = {
       format: 'cjs',
       pkgJson: {
+        name: 'foo',
         type: 'module',
       },
       autoExtension: true,
@@ -62,6 +65,7 @@ describe('should get extension correctly', () => {
     const options: Options = {
       format: 'cjs',
       pkgJson: {
+        name: 'foo',
         type: 'commonjs',
       },
       autoExtension: true,
@@ -80,6 +84,7 @@ describe('should get extension correctly', () => {
     const options: Options = {
       format: 'esm',
       pkgJson: {
+        name: 'foo',
         type: 'commonjs',
       },
       autoExtension: true,
@@ -98,6 +103,7 @@ describe('should get extension correctly', () => {
     const options: Options = {
       format: 'esm',
       pkgJson: {
+        name: 'foo',
         type: 'module',
       },
       autoExtension: true,

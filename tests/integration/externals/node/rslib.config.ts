@@ -5,12 +5,11 @@ export default defineConfig({
   lib: [
     generateBundleEsmConfig({
       output: {
-        target: 'node',
         externals: { foo: 'node-commonjs foo' },
       },
     }),
     generateBundleCjsConfig({
-      output: { target: 'node', externals: { foo: 'foo' } },
+      output: { externals: { foo: 'foo' } },
     }),
   ],
   source: {
@@ -19,6 +18,7 @@ export default defineConfig({
     },
   },
   output: {
-    externals: { react: 'react', bar: 'bar' },
+    externals: { react: 'react', bar: 'bar', './baz.mjs': './baz.mjs' },
+    copy: [{ from: './src/baz.mjs' }],
   },
 });

@@ -1,12 +1,18 @@
 import type { RsbuildMode } from '@rsbuild/core';
-import { type Command, program } from 'commander';
-import { build } from '../build';
-import { initRsbuild, loadConfig } from '../config';
+import cac, { type CAC } from 'cac';
 import { logger } from '../utils/logger';
+import { build } from './build';
+import { init } from './init';
+import { inspect } from './inspect';
+import { startMFDevServer } from './mf';
+import { watchFilesForRestart } from './restart';
 
 export type CommonOptions = {
+  root?: string;
   config?: string;
+  envDir?: string;
   envMode?: string;
+  lib?: string[];
 };
 
 export type BuildOptions = CommonOptions & {
@@ -14,66 +20,98 @@ export type BuildOptions = CommonOptions & {
 };
 
 export type InspectOptions = CommonOptions & {
-  mode: RsbuildMode;
-  output: string;
+  mode?: RsbuildMode;
+  output?: string;
   verbose?: boolean;
 };
 
-const applyCommonOptions = (command: Command) => {
-  command
+const applyCommonOptions = (cli: CAC) => {
+  cli
     .option(
-      '-c --config <config>',
+      '-c, --config <config>',
       'specify the configuration file, can be a relative or absolute path',
+    )
+    .option(
+      '-r, --root <root>',
+      'specify the project root directory, can be an absolute path or a path relative to cwd',
     )
     .option(
       '--env-mode <mode>',
       'specify the env mode to load the `.env.[mode]` file',
+    )
+    .option('--env-dir <dir>', 'specify the directory to load `.env` files')
+    .option(
+      '--lib <id>',
+      'specify the library (repeatable, e.g. --lib esm --lib cjs)',
+      {
+        type: [String],
+        default: [],
+      },
     );
 };
 
 export function runCli(): void {
-  program.name('rslib').usage('<command> [options]').version(RSLIB_VERSION);
+  const cli = cac('rslib');
 
-  const buildCommand = program.command('build');
-  const inspectCommand = program.command('inspect');
+  cli.help();
+  cli.version(RSLIB_VERSION);
 
-  [buildCommand, inspectCommand].forEach(applyCommonOptions);
+  applyCommonOptions(cli);
+
+  const buildCommand = cli.command('build', 'build the library for production');
+  const inspectCommand = cli.command(
+    'inspect',
+    'inspect the Rsbuild / Rspack configs of Rslib projects',
+  );
+  const mfDevCommand = cli.command(
+    'mf-dev',
+    'start Rsbuild dev server of Module Federation format',
+  );
 
   buildCommand
-    .option('-w --watch', 'turn on watch mode, watch for changes and rebuild')
-    .description('build the library for production')
+    .option('-w, --watch', 'turn on watch mode, watch for changes and rebuild')
     .action(async (options: BuildOptions) => {
       try {
-        const rslibConfig = await loadConfig({
-          path: options.config,
-          envMode: options.envMode,
-        });
-        await build(rslibConfig, options);
+        const cliBuild = async () => {
+          const { config, watchFiles } = await init(options);
+
+          await build(config, options);
+
+          if (options.watch) {
+            watchFilesForRestart(watchFiles, async () => {
+              await cliBuild();
+            });
+          }
+        };
+
+        await cliBuild();
       } catch (err) {
         logger.error('Failed to build.');
-        logger.error(err);
+        if (err instanceof AggregateError) {
+          for (const error of err.errors) {
+            logger.error(error);
+          }
+        } else {
+          logger.error(err);
+        }
         process.exit(1);
       }
     });
 
   inspectCommand
-    .description('inspect the Rslib / Rsbuild / Rspack configs')
-    .option('--env <env>', 'specify env mode', 'development')
-    .option('--output <output>', 'specify inspect content output path', './')
+    .option('--output <output>', 'specify inspect content output path', {
+      default: '.rsbuild',
+    })
     .option('--verbose', 'show full function definitions in output')
     .action(async (options: InspectOptions) => {
       try {
         // TODO: inspect should output Rslib's config
-        const rslibConfig = await loadConfig({
-          path: options.config,
-          envMode: options.envMode,
-        });
-        const rsbuildInstance = await initRsbuild(rslibConfig);
-        await rsbuildInstance.inspectConfig({
+        const { config } = await init(options);
+        await inspect(config, {
+          lib: options.lib,
           mode: options.mode,
+          output: options.output,
           verbose: options.verbose,
-          outputPath: options.output,
-          writeToDisk: true,
         });
       } catch (err) {
         logger.error('Failed to inspect config.');
@@ -82,5 +120,26 @@ export function runCli(): void {
       }
     });
 
-  program.parse();
+  mfDevCommand.action(async (options: CommonOptions) => {
+    try {
+      const cliMfDev = async () => {
+        const { config, watchFiles } = await init(options);
+        await startMFDevServer(config, {
+          lib: options.lib,
+        });
+
+        watchFilesForRestart(watchFiles, async () => {
+          await cliMfDev();
+        });
+      };
+
+      await cliMfDev();
+    } catch (err) {
+      logger.error('Failed to start mf-dev.');
+      logger.error(err);
+      process.exit(1);
+    }
+  });
+
+  cli.parse();
 }

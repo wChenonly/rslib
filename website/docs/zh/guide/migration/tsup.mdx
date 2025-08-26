@@ -1,1 +1,71 @@
 # tsup
+
+本章节介绍如何将使用 tsup 的项目迁移到 Rslib。
+
+## 安装依赖
+
+首先，你需要将 tsup 的 npm 依赖替换为 Rslib 的依赖。
+
+import { PackageManagerTabs } from '@theme';
+
+- 移除 tsup:
+
+<PackageManagerTabs command="remove tsup" />
+
+- 安装 Rslib:
+
+<PackageManagerTabs command="add @rslib/core -D" />
+
+## 更新 npm 脚本
+
+接下来，你需要更新 `package.json` 中的 npm 脚本，以使用 Rslib 的 CLI 命令。
+
+```diff title="package.json"
+{
+  "scripts": {
+-   "build": "tsup",
+-   "build:watch": "tsup --watch",
++   "build": "rslib build",
++   "build:watch": "rslib build --watch"
+  }
+}
+```
+
+## 创建配置文件
+
+在 `package.json` 所在的同一目录中创建一个 Rslib 配置文件 `rslib.config.ts`，并添加以下内容：
+
+```ts title="rslib.config.ts"
+import { defineConfig } from '@rslib/core';
+
+export default defineConfig({});
+```
+
+## 配置迁移
+
+以下是 tsup 配置对应的 Rslib 配置：
+
+| tsup          | Rslib                                                                                                      |
+| ------------- | ---------------------------------------------------------------------------------------------------------- |
+| banner        | [lib.banner](/config/lib/banner)                                                                           |
+| bundle        | [lib.bundle](/config/lib/bundle)                                                                           |
+| clean         | [output.cleanDistPath](/config/rsbuild/output#outputcleandistpath)                                         |
+| define        | [source.define](/config/rsbuild/source#sourcedefine)                                                       |
+| dts           | [lib.dts](/config/lib/dts)                                                                                 |
+| entry         | [source.entry](/config/rsbuild/source#sourceentry)                                                         |
+| external      | [output.externals](/config/rsbuild/output#outputexternals) / [lib.autoExternal](/config/lib/auto-external) |
+| format        | [lib.format](/config/lib/format)                                                                           |
+| footer        | [lib.footer](/config/lib/footer)                                                                           |
+| minify        | [output.minify](/config/rsbuild/output#outputminify)                                                       |
+| platform      | [output.target](/config/rsbuild/output#outputtarget)                                                       |
+| plugins       | [plugins](/config/rsbuild/plugins)                                                                         |
+| sourcemap     | [output.sourceMap](/config/rsbuild/output#outputsourcemap)                                                 |
+| shims         | [lib.shims](/config/lib/shims)                                                                             |
+| terserOptions | [output.minify](/config/rsbuild/output#outputminify)                                                       |
+| tsconfig      | [source.tsconfigPath](/config/rsbuild/source#sourcetsconfigpath)                                           |
+
+## 内容补充
+
+当前文档仅包含部分迁移过程。如果你发现合适的内容需要添加，请随时通过 pull request 贡献文档 🤝。
+
+> Rslib 的文档可以在 [rslib/website](https://github.com/web-infra-dev/rslib/tree/main/website) 目录中找到。

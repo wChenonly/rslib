@@ -1,1 +1,90 @@
 # 类型生成
+
+本章介绍什么是 [TypeScript 类型声明文件](https://www.typescriptlang.org/docs/handbook/declaration-files/introduction.html)，以及如何在 Rslib 中生成类型声明文件。
+
+## 什么是类型声明文件
+
+TypeScript 类型声明文件提供 JavaScript 代码的类型信息。类型声明文件通常具有 `.d.ts` 扩展名。它们允许 TypeScript 编译器理解 JavaScript 代码的类型结构，从而实现以下功能：
+
+1. **类型检查**: 为 JavaScript 代码提供类型信息，帮助开发人员在编译时捕获潜在的类型错误。
+2. **代码补全**: 增强代码编辑器功能，例如自动完成和代码导航。
+3. **文档生成**: 生成 JavaScript 代码文档，提供更好的开发体验。
+4. **IDE 支持**: 改善 Visual Studio Code、WebStorm 等 IDE 中的开发者体验。
+5. **库消费**: 让其他使用者更容易使用和理解该库。
+
+## 什么是 bundle 类型和 bundleless 类型
+
+### Bundle 类型
+
+Bundle 类型将多个 TypeScript 声明文件打包到一个声明文件中。
+
+- **优势:**
+  - **简化管理**: 简化类型文件的管理和引用。
+  - **容易分发**: 减少用户使用库时需要处理的文件数量。
+
+- **劣势:**
+  - **生成复杂**: 在大型项目中，生成和维护单个 bundle 文件可能会变得复杂。
+  - **调试困难**: 调试类型问题可能不像各个文件单独输出那样直观。
+
+### Bundleless 类型
+
+Bundleless 类型为库中的每个模块生成单独的声明文件，就像 `tsc` 一样。
+
+- **优势:**
+  - **模块化**: 每个模块都有自己的类型定义，使维护和调试更容易。
+  - **灵活**: 适合大型项目，避免单个文件的复杂性。
+
+- **劣势:**
+  - **多文件**: 用户在使用该库时可能需要处理多个声明文件。
+  - **管理复杂**: 可能需要额外的配置才能正确引用所有文件。
+
+## 如何在 Rslib 中生成类型声明文件
+
+Rslib 默认使用 [TypeScript Compiler API](https://github.com/microsoft/TypeScript/wiki/Using-the-Compiler-API) 生成 bundleless 类型，用 [API Extractor](https://api-extractor.com/) 生成 bundle 类型。
+
+如果你想生成 bundleless 类型，可以：
+
+- 设置 `dts: true` 或者 `dts: { bundle: false }` 在 Rslib 配置文件。
+
+如果你想生成 bundle 类型，可以：
+
+1. 安装 `@microsoft/api-extractor` 作为 `devDependencies`, 这是用于打包类型声明文件的底层工具。
+
+import { PackageManagerTabs } from '@theme';
+
+<PackageManagerTabs command="add @microsoft/api-extractor -D" />
+
+2. 在 Rslib 配置文件中设置 `dts: { bundle: true }`。
+
+需要注意的是，Rslib 在生成类型声明文件的过程中，默认会强制设置 `tsconfig.json` 中的一些配置项以保证 [TypeScript Compiler API](https://github.com/microsoft/TypeScript/wiki/Using-the-Compiler-API) 能够仅生成类型声明文件。
+
+```json
+{
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true
+  }
+}
+```
+
+最终类型声明文件输出目录的优先级从高到低为：
+
+- [dts.distPath](/config/lib/dts#dtsdistpath) 配置项
+- `tsconfig.json` 中的 `declarationDir` 配置项
+- [output.distPath.root](/config/rsbuild/output#outputdistpath) 配置项
+
+## 类型声明文件的相关配置
+
+| 配置项                                                              | 描述说明                                                               |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [dts.bundle](/config/lib/dts#dtsbundle)                             | 是否打包类型声明文件。                                                 |
+| [dts.distPath](/config/lib/dts#dtsdistpath)                         | 类型声明文件的输出目录。                                               |
+| [dts.build](/config/lib/dts#dtsbuild)                               | 是否在生成类型声明文件时构建项目的 project references。                |
+| [dts.abortOnError](/config/lib/dts#dtsabortonerror)                 | 当类型声明文件生成过程中出现错误时，是否中止构建过程。                 |
+| [dts.autoExtension](/config/lib/dts#dtsautoextension)               | 是否根据 [format](/config/lib/format) 选项自动设置类型声明文件扩展名。 |
+| [dts.alias](/config/lib/dts#dtsalias)                               | 类型声明文件的路径别名。                                               |
+| [banner.dts](/config/lib/banner#bannerdts)                          | 在每个类型声明文件顶部注入内容。                                       |
+| [footer.dts](/config/lib/footer#footerdts)                          | 在每个类型声明文件底部注入内容。                                       |
+| [redirect.dts.path](/config/lib/redirect#redirectdtspath)           | 是否自动重定向类型声明文件中的导入路径。                               |
+| [redirect.dts.extension](/config/lib/redirect#redirectdtsextension) | 是否根据类型声明文件自动重定向文件扩展名到导入路径。                   |

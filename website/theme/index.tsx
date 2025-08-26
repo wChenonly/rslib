@@ -1,40 +1,62 @@
-import { Announcement } from '@rstack-dev/doc-ui/announcement';
+import {
+  getCustomMDXComponent as BaseGetCustomMDXComponent,
+  Layout as BaseLayout,
+} from '@rspress/core/theme';
+import {
+  Search as PluginAlgoliaSearch,
+  ZH_LOCALES,
+} from '@rspress/plugin-algolia/runtime';
 import { NavIcon } from '@rstack-dev/doc-ui/nav-icon';
-import { NoSSR, useLang, usePageData } from 'rspress/runtime';
-import Theme from 'rspress/theme';
 import { HomeLayout } from './pages';
 import './index.scss';
+import { useLang } from '@rspress/core/runtime';
+import {
+  LlmsContainer,
+  LlmsCopyButton,
+  LlmsViewOptions,
+} from '@rspress/plugin-llms/runtime';
 
-const ANNOUNCEMENT_URL = '/';
+export function getCustomMDXComponent() {
+  const { h1: H1, ...mdxComponents } = BaseGetCustomMDXComponent();
+
+  const MyH1 = ({ ...props }) => {
+    return (
+      <>
+        <H1 {...props} />
+        <LlmsContainer>
+          <LlmsCopyButton />
+          <LlmsViewOptions />
+        </LlmsContainer>
+      </>
+    );
+  };
+  return {
+    ...mdxComponents,
+    h1: MyH1,
+  };
+}
 
 const Layout = () => {
-  const { page } = usePageData();
+  return <BaseLayout beforeNavTitle={<NavIcon />} />;
+};
+
+const Search = () => {
   const lang = useLang();
   return (
-    <Theme.Layout
-      beforeNavTitle={<NavIcon />}
-      beforeNav={
-        <NoSSR>
-          <Announcement
-            href={ANNOUNCEMENT_URL}
-            message={
-              lang === 'en'
-                ? '🚧 Rslib documentation is under construction, stay tuned for a stable version!'
-                : '🚧 Rslib 中文文档正在施工中，可以先查阅英文文档'
-            }
-            localStorageKey="rslib-announcement-closed"
-            display={page.pageType === 'home'}
-          />
-        </NoSSR>
-      }
+    <PluginAlgoliaSearch
+      docSearchProps={{
+        appId: 'TICGXW7OMD', // cspell:disable-line
+        apiKey: '08656eae2f8e85d7f3473574000889f2', // cspell:disable-line
+        indexName: 'lib',
+        searchParameters: {
+          facetFilters: [`lang:${lang}`],
+        },
+      }}
+      locales={ZH_LOCALES}
     />
   );
 };
 
-export default {
-  ...Theme,
-  Layout,
-  HomeLayout,
-};
+export { Layout, HomeLayout, Search };
 
-export * from 'rspress/theme';
+export * from '@rspress/core/theme';

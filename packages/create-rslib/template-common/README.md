@@ -1,4 +1,4 @@
-# Rslib Project
+# Rslib project
 
 ## Setup
 
@@ -8,7 +8,7 @@ Install the dependencies:
 pnpm install
 ```
 
-## Get Started
+## Get started
 
 Build the library:
 
@@ -19,5 +19,5 @@ pnpm build
 Build the library in watch mode:
 
 ```bash
-pnpm build --watch
+pnpm dev
 ```

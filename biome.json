@@ -1,15 +1,11 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.7.0/schema.json",
-  "organizeImports": {
-    "enabled": true,
-    "include": [
-      "./**/*.js",
-      "./**/*.jsx",
-      "./**/*.ts",
-      "./**/*.tsx",
-      "./**/*.mjs",
-      "./**/*.cjs"
-    ]
+  "$schema": "https://biomejs.dev/schemas/2.2.0/schema.json",
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
   },
   "vcs": {
     "enabled": true,
@@ -21,9 +17,11 @@
     "ignoreUnknown": true
   },
   "formatter": {
-    "ignore": [
-      "**/.rslib/*",
-      "./tests/e2e/react-component/public/umd/index.js"
+    "includes": [
+      "**",
+      "!**/*.vue",
+      "!**/.rslib/**/*",
+      "!tests/e2e/react-component/public/umd/**/*"
     ],
     "indentStyle": "space"
   },
@@ -45,9 +43,13 @@
   },
   "linter": {
     "enabled": true,
-    "ignore": [
-      "./tests/integration/**/*/src/*",
-      "./tests/e2e/react-component/public/umd/index.js"
+    "includes": [
+      "**",
+      "!**/*.vue",
+      "!**/dist/**",
+      "!**/.rslib/**/*",
+      "!tests/integration/**/*/src/**/*",
+      "!tests/e2e/react-component/public/umd/**/*"
     ],
     "rules": {
       "recommended": true,
@@ -58,7 +60,17 @@
           "options": {
             "filenameCases": ["camelCase", "PascalCase", "export"]
           }
-        }
+        },
+        "noParameterAssign": "error",
+        "useAsConstAssertion": "error",
+        "useDefaultParameterLast": "error",
+        "useEnumInitializers": "error",
+        "useSelfClosingElements": "error",
+        "useSingleVarDeclarator": "error",
+        "noUnusedTemplateLiteral": "error",
+        "useNumberNamespace": "error",
+        "noInferrableTypes": "error",
+        "noUselessElse": "error"
       },
       "suspicious": {
         "noExplicitAny": "off",
@@ -66,6 +78,10 @@
       },
       "performance": {
         "noDelete": "off"
+      },
+      "correctness": {
+        "useHookAtTopLevel": "off",
+        "useUniqueElementIds": "off"
       }
     }
   }

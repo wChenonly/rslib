@@ -1,16 +1,50 @@
 import fs from 'node:fs';
 import fsP from 'node:fs/promises';
+
 import { platform } from 'node:os';
-import path, { join } from 'node:path';
-import { type RsbuildConfig, logger } from '@rsbuild/core';
+import path, {
+  basename,
+  dirname,
+  extname,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+  resolve,
+} from 'node:path';
+import { type NapiConfig, parseAsync } from '@ast-grep/napi';
+import { logger, type RsbuildConfig } from '@rsbuild/core';
 import MagicString from 'magic-string';
 import color from 'picocolors';
 import { convertPathToPattern, glob } from 'tinyglobby';
+import { createMatchPath, loadConfig, type MatchPath } from 'tsconfig-paths';
 import ts from 'typescript';
-import type { DtsEntry } from './index';
+import type { DtsEntry, DtsRedirect } from './index';
+
+const JS_EXTENSIONS: string[] = [
+  'js',
+  'mjs',
+  'jsx',
+  '(?<!\\.d\\.)ts', // ignore d.ts,
+  '(?<!\\.d\\.)mts', // ditto
+  '(?<!\\.d\\.)cts', // ditto
+  'tsx',
+  'cjs',
+  'cjsx',
+  'mjsx',
+  'mtsx',
+  'ctsx',
+] as const;
+
+export const JS_EXTENSIONS_PATTERN: RegExp = new RegExp(
+  `\\.(${JS_EXTENSIONS.join('|')})$`,
+);
 
 export function loadTsconfig(tsconfigPath: string): ts.ParsedCommandLine {
-  const configFile = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
+  const configFile = ts.readConfigFile(
+    tsconfigPath,
+    ts.sys.readFile.bind(ts.sys),
+  );
   const configFileContent = ts.parseJsonConfigFileContent(
     configFile.config,
     ts.sys,
@@ -20,11 +54,38 @@ export function loadTsconfig(tsconfigPath: string): ts.ParsedCommandLine {
   return configFileContent;
 }
 
+export function mergeAliasWithTsConfigPaths(
+  paths: Record<string, string[]> | undefined,
+  alias: Record<string, string> = {},
+): Record<string, string[]> {
+  const mergedPaths: Record<string, string[]> = {};
+
+  if (alias && typeof alias === 'object' && Object.keys(alias).length > 0) {
+    for (const [key, value] of Object.entries(alias)) {
+      if (typeof value === 'string' && value.trim()) {
+        mergedPaths[key] = [value];
+      }
+    }
+  }
+
+  if (paths) {
+    for (const [key, value] of Object.entries(paths)) {
+      if (Array.isArray(value) && value.length > 0) {
+        if (!mergedPaths[key]) {
+          mergedPaths[key] = [...value];
+        }
+      }
+    }
+  }
+
+  return Object.keys(mergedPaths).length > 0 ? mergedPaths : {};
+}
+
 export const TEMP_FOLDER = '.rslib';
 export const TEMP_DTS_DIR: string = `${TEMP_FOLDER}/declarations`;
 
-export function ensureTempDeclarationDir(cwd: string): string {
-  const dirPath = path.join(cwd, TEMP_DTS_DIR);
+export function ensureTempDeclarationDir(cwd: string, name: string): string {
+  const dirPath = path.join(cwd, TEMP_DTS_DIR, name);
 
   if (fs.existsSync(dirPath)) {
     return dirPath;
@@ -38,7 +99,50 @@ export function ensureTempDeclarationDir(cwd: string): string {
   return dirPath;
 }
 
-export function getFileLoc(diagnostic: ts.Diagnostic): string {
+export async function pathExists(path: string): Promise<boolean> {
+  return fs.promises
+    .access(path)
+    .then(() => true)
+    .catch(() => false);
+}
+
+export async function isDirectory(filePath: string): Promise<boolean> {
+  try {
+    const stat = await fsP.stat(filePath);
+    return stat.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+export async function emptyDir(dir: string): Promise<void> {
+  if (!(await pathExists(dir))) {
+    return;
+  }
+
+  try {
+    for (const file of await fs.promises.readdir(dir)) {
+      await fs.promises.rm(path.resolve(dir, file), {
+        recursive: true,
+        force: true,
+      });
+    }
+  } catch (err) {
+    logger.warn(`Failed to empty dir: ${dir}`);
+    logger.warn(err);
+  }
+}
+
+export async function clearTempDeclarationDir(cwd: string): Promise<void> {
+  const dirPath = path.join(cwd, TEMP_DTS_DIR);
+
+  await emptyDir(dirPath);
+}
+
+export function getFileLoc(
+  diagnostic: ts.Diagnostic,
+  configPath: string,
+): string {
   if (diagnostic.file) {
     const { line, character } = ts.getLineAndCharacterOfPosition(
       diagnostic.file,
@@ -47,7 +151,7 @@ export function getFileLoc(diagnostic: ts.Diagnostic): string {
     return `${color.cyan(diagnostic.file.fileName)}:${color.yellow(line + 1)}:${color.yellow(character + 1)}`;
   }
 
-  return '';
+  return color.cyan(configPath);
 }
 
 export const prettyTime = (seconds: number): string => {
@@ -62,8 +166,19 @@ export const prettyTime = (seconds: number): string => {
     return `${format(seconds.toFixed(1))} s`;
   }
 
-  const minutes = seconds / 60;
-  return `${format(minutes.toFixed(2))} m`;
+  const minutes = Math.floor(seconds / 60);
+  const minutesLabel = `${format(minutes.toFixed(0))} m`;
+  const remainingSeconds = seconds % 60;
+
+  if (remainingSeconds === 0) {
+    return minutesLabel;
+  }
+
+  const secondsLabel = `${format(
+    remainingSeconds.toFixed(remainingSeconds % 1 === 0 ? 0 : 1),
+  )} s`;
+
+  return `${minutesLabel} ${secondsLabel}`;
 };
 
 // tinyglobby only accepts posix path
@@ -81,27 +196,236 @@ export function getTimeCost(start: number): string {
 }
 
 export async function addBannerAndFooter(
-  file: string,
+  dtsFile: string,
   banner?: string,
   footer?: string,
 ): Promise<void> {
-  if (!banner && !footer) {
-    return;
-  }
-
-  const content = await fsP.readFile(file, 'utf-8');
+  const content = await fsP.readFile(dtsFile, 'utf-8');
   const code = new MagicString(content);
 
-  banner && code.prepend(`${banner}\n`);
-  footer && code.append(`\n${footer}\n`);
+  if (banner && !content.trimStart().startsWith(banner.trim())) {
+    code.prepend(`${banner}\n`);
+  }
 
-  await fsP.writeFile(file, code.toString());
+  if (footer && !content.trimEnd().endsWith(footer.trim())) {
+    code.append(`\n${footer}\n`);
+  }
+
+  if (code.hasChanged()) {
+    await fsP.writeFile(dtsFile, code.toString());
+  }
+}
+
+async function addExtension(
+  redirect: DtsRedirect,
+  dtsFile: string,
+  path: string,
+  extension: string,
+): Promise<string> {
+  if (!redirect.extension) {
+    return path;
+  }
+
+  let redirectPath = path;
+
+  // Only add extension if redirectPath is an absolute or relative path
+  if (!isAbsolute(redirectPath) && !redirectPath.startsWith('.')) {
+    return redirectPath;
+  }
+
+  // If the import path refers to a directory, it most likely actually refers to a `index.*` file due to Node's module resolution
+  if (await isDirectory(join(dirname(dtsFile), redirectPath))) {
+    // This uses `/` instead of `path.join` here because `join` removes potential "./" prefixes
+    redirectPath = `${redirectPath.replace(/\/+$/, '')}/index`;
+  }
+
+  return `${redirectPath}${extension}`;
+}
+
+export async function redirectDtsImports(
+  dtsFile: string,
+  dtsExtension: string,
+  redirect: DtsRedirect,
+  matchPath: MatchPath,
+  outDir: string,
+  rootDir: string,
+): Promise<void> {
+  const content = await fsP.readFile(dtsFile, 'utf-8');
+  const code = new MagicString(content);
+  const sgNode = (await parseAsync('typescript', content)).root();
+  const matcher: NapiConfig = {
+    rule: {
+      any: [
+        // import foo from 'bar'
+        {
+          kind: 'import_statement',
+          has: {
+            field: 'source',
+            has: {
+              pattern: '$IMP',
+              kind: 'string_fragment',
+            },
+          },
+        },
+        // import foo = require('bar')
+        {
+          kind: 'import_statement',
+          has: {
+            kind: 'import_require_clause',
+            has: {
+              field: 'source',
+              has: {
+                pattern: '$IMP',
+                kind: 'string_fragment',
+              },
+            },
+          },
+        },
+        // export { foo } from 'bar'
+        {
+          kind: 'export_statement',
+          has: {
+            field: 'source',
+            has: {
+              pattern: '$IMP',
+              kind: 'string_fragment',
+            },
+          },
+        },
+        // require('foo') / import('foo')
+        {
+          any: [{ pattern: 'require($A)' }, { pattern: 'import($A)' }],
+          has: {
+            field: 'arguments',
+            has: {
+              has: {
+                pattern: '$IMP',
+                kind: 'string_fragment',
+              },
+            },
+          },
+        },
+      ],
+    },
+  };
+  const matchModule = sgNode.findAll(matcher).map((match) => {
+    // we can guarantee $IMP is matched given the rule
+    const matchNode = match.getMatch('IMP')!;
+    return {
+      n: matchNode.text(),
+      s: matchNode.range().start.index,
+      e: matchNode.range().end.index,
+    };
+  });
+  const extension = dtsExtension
+    .replace(/\.d\.ts$/, '.js')
+    .replace(/\.d\.cts$/, '.cjs')
+    .replace(/\.d\.mts$/, '.mjs');
+
+  for (const imp of matchModule) {
+    const { n: importPath, s: start, e: end } = imp;
+
+    if (!importPath) continue;
+
+    try {
+      const absoluteImportPath = matchPath(importPath, undefined, undefined, [
+        '.jsx',
+        '.tsx',
+        '.js',
+        '.ts',
+        '.mjs',
+        '.mts',
+        '.cjs',
+        '.cts',
+        '.d.ts',
+      ]);
+
+      let redirectImportPath = importPath;
+
+      if (
+        absoluteImportPath &&
+        !absoluteImportPath.includes('node_modules') &&
+        redirect.path
+      ) {
+        const relativeRootDir = path.relative(
+          normalize(rootDir),
+          normalize(absoluteImportPath),
+        );
+        const isOutsideRootdir =
+          relativeRootDir.startsWith('..') || path.isAbsolute(relativeRootDir);
+
+        if (isOutsideRootdir) {
+          const relativePath = relative(dirname(dtsFile), absoluteImportPath);
+          redirectImportPath = relativePath.startsWith('..')
+            ? relativePath
+            : `./${relativePath}`;
+        } else {
+          const originalFilePath = resolve(rootDir, relative(outDir, dtsFile));
+          const originalSourceDir = dirname(originalFilePath);
+          const relativePath = relative(originalSourceDir, absoluteImportPath);
+          redirectImportPath = relativePath.startsWith('..')
+            ? relativePath
+            : `./${relativePath}`;
+        }
+      }
+
+      const ext = extname(redirectImportPath);
+
+      if (ext) {
+        if (JS_EXTENSIONS_PATTERN.test(redirectImportPath)) {
+          if (redirect.extension) {
+            redirectImportPath = redirectImportPath.replace(
+              /\.[^.]+$/,
+              extension,
+            );
+          }
+        }
+      } else {
+        if (
+          absoluteImportPath &&
+          normalize(absoluteImportPath).startsWith(normalize(rootDir))
+        ) {
+          redirectImportPath = await addExtension(
+            redirect,
+            dtsFile,
+            redirectImportPath,
+            extension,
+          );
+        }
+
+        if (!absoluteImportPath && importPath.startsWith('.')) {
+          redirectImportPath = await addExtension(
+            redirect,
+            dtsFile,
+            redirectImportPath,
+            extension,
+          );
+        }
+      }
+
+      const normalizedRedirectImportPath = redirectImportPath
+        .split(path.sep)
+        .join('/');
+
+      code.overwrite(start, end, normalizedRedirectImportPath);
+    } catch (err) {
+      logger.warn(err);
+    }
+  }
+
+  if (code.hasChanged()) {
+    await fsP.writeFile(dtsFile, code.toString());
+  }
 }
 
 export async function processDtsFiles(
   bundle: boolean,
   dir: string,
   dtsExtension: string,
+  redirect: DtsRedirect,
+  tsconfigPath: string,
+  rootDir: string,
+  paths: Record<string, string[]>,
   banner?: string,
   footer?: string,
 ): Promise<void> {
@@ -109,45 +433,93 @@ export async function processDtsFiles(
     return;
   }
 
-  const dtsFiles = await glob(convertPath(join(dir, '/**/*.d.ts')), {
-    absolute: true,
-  });
+  let matchPath: MatchPath | undefined;
 
-  for (const file of dtsFiles) {
-    try {
-      await addBannerAndFooter(file, banner, footer);
-      const newFile = file.replace('.d.ts', dtsExtension);
-      fs.renameSync(file, newFile);
-    } catch (error) {
-      logger.error(`Error renaming DTS file ${file}: ${error}`);
+  if (redirect.path || redirect.extension) {
+    const result = loadConfig(tsconfigPath);
+
+    if (result.resultType === 'failed') {
+      logger.error(result.message);
+      return;
     }
+
+    const { absoluteBaseUrl, addMatchAll } = result;
+    const mainFields: string[] = [];
+    /**
+     * resolve paths priorities:
+     * see https://github.com/jonaskello/tsconfig-paths/blob/098e066632f5b9f35c956803fe60d17ffc60b688/src/try-path.ts#L11-L17
+     */
+    matchPath = createMatchPath(
+      absoluteBaseUrl,
+      paths,
+      mainFields,
+      addMatchAll,
+    );
   }
+
+  const dtsFiles = await globDtsFiles(dir, [`/**/*${dtsExtension}`]);
+
+  await Promise.all(
+    dtsFiles.map(async (file) => {
+      try {
+        if (banner || footer) {
+          await addBannerAndFooter(file, banner, footer);
+        }
+
+        if ((redirect.path || redirect.extension) && matchPath) {
+          await redirectDtsImports(
+            file,
+            dtsExtension,
+            redirect,
+            matchPath,
+            dir,
+            rootDir,
+          );
+        }
+      } catch (error) {
+        logger.error(`Failed to rename declaration file ${file}: ${error}`);
+      }
+    }),
+  );
 }
 
 export function processSourceEntry(
   bundle: boolean,
   entryConfig: NonNullable<RsbuildConfig['source']>['entry'],
-): DtsEntry {
+): DtsEntry[] {
   if (!bundle) {
-    return {
-      name: undefined,
-      path: undefined,
-    };
+    return [];
   }
 
   if (
     entryConfig &&
     Object.values(entryConfig).every((val) => typeof val === 'string')
   ) {
-    return {
-      name: Object.keys(entryConfig)[0] as string,
-      path: Object.values(entryConfig)[0] as string,
-    };
+    const entries = Object.entries(entryConfig as Record<string, string>).map(
+      ([name, path]) => ({
+        name,
+        path,
+      }),
+    );
+
+    if (entries.length === 0) {
+      const noValidEntryError = new Error(
+        `Can not find a valid entry for ${color.cyan('dts.bundle')} option, please check your entry config.`,
+      );
+      // do not log the stack trace, it is not helpful for users
+      noValidEntryError.stack = '';
+      throw noValidEntryError;
+    }
+
+    return entries;
   }
 
-  throw new Error(
-    '@microsoft/api-extractor only support single entry of Record<string, string> type to bundle DTS, please check your entry config.',
+  const error = new Error(
+    '@microsoft/api-extractor only support entry of Record<string, string> type to bundle declaration files, please check your entry config.',
   );
+  // do not log the stack trace, it is not helpful for users
+  error.stack = '';
+  throw error;
 }
 
 // same as @rslib/core, we should extract into a single published package to share
@@ -185,4 +557,89 @@ export async function calcLongestCommonPath(
   }
 
   return lca;
+}
+
+export const globDtsFiles = async (
+  dir: string,
+  patterns: string[],
+): Promise<string[]> => {
+  const dtsFiles = await Promise.all(
+    patterns.map(async (pattern) =>
+      glob(convertPath(join(dir, pattern)), { absolute: true }),
+    ),
+  );
+
+  return dtsFiles.flat();
+};
+
+export async function cleanDtsFiles(dir: string): Promise<void> {
+  const patterns = ['/**/*.d.ts', '/**/*.d.cts', '/**/*.d.mts'];
+  const allFiles = await globDtsFiles(dir, patterns);
+
+  await Promise.all(
+    allFiles.map(async (file) => fsP.rm(file, { force: true })),
+  );
+}
+
+export async function cleanTsBuildInfoFile(
+  tsconfigPath: string,
+  compilerOptions: ts.CompilerOptions,
+): Promise<void> {
+  const tsconfigDir = dirname(tsconfigPath);
+  const { outDir, rootDir, tsBuildInfoFile } = compilerOptions;
+  let tsbuildInfoFilePath: string;
+
+  if (tsBuildInfoFile && isAbsolute(tsBuildInfoFile)) {
+    tsbuildInfoFilePath = tsBuildInfoFile;
+  } else {
+    const defaultFileName = `${basename(
+      tsconfigPath,
+      '.json',
+    )}${tsBuildInfoFile ?? '.tsbuildinfo'}`;
+    if (outDir) {
+      if (rootDir) {
+        tsbuildInfoFilePath = join(
+          outDir,
+          relative(resolve(tsconfigDir, rootDir), tsconfigDir),
+          defaultFileName,
+        );
+      } else {
+        tsbuildInfoFilePath = join(outDir, defaultFileName);
+      }
+    } else {
+      tsbuildInfoFilePath = join(tsconfigDir, defaultFileName);
+    }
+  }
+
+  if (await pathExists(tsbuildInfoFilePath)) {
+    await fsP.rm(tsbuildInfoFilePath, { force: true });
+  }
+}
+
+// the priority of dtsEmitPath is dts.distPath > declarationDir > output.distPath.root
+// outDir is not considered since in multiple formats, the dts files may not in the same directory as the js files
+export function getDtsEmitPath(
+  pathFromPlugin: string | undefined,
+  declarationDir: string | undefined,
+  distPath: string,
+): string {
+  return pathFromPlugin ?? declarationDir ?? distPath;
+}
+
+export function warnIfOutside(
+  cwd: string,
+  dir: string | undefined,
+  label: string,
+): void {
+  if (dir) {
+    const normalizedCwd = normalize(cwd);
+    const normalizedDir = normalize(dir);
+    const relDir = relative(normalizedCwd, normalizedDir);
+
+    if (relDir.startsWith('..')) {
+      logger.warn(
+        `The resolved ${label} ${color.cyan(normalizedDir)} is outside the project root ${color.cyan(normalizedCwd)}, please check your tsconfig file.`,
+      );
+    }
+  }
 }

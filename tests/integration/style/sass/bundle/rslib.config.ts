@@ -12,13 +12,19 @@ export default defineConfig({
   plugins: [
     pluginSass({
       sassLoaderOptions: {
-        additionalData: '$base-color: #c6538c;',
+        additionalData(content, loaderContext) {
+          const contentStr =
+            typeof content === 'string' ? content : content.toString();
+
+          if (loaderContext.resourcePath.endsWith('.scss')) {
+            return `$base-color: #c6538c;${contentStr}`;
+          }
+          return contentStr;
+        },
       },
     }),
   ],
-  // output: {
-  //   dataUriLimit: {
-  //     svg: 0
-  //   }
-  // }
+  output: {
+    target: 'web',
+  },
 });

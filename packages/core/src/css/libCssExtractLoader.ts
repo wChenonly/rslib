@@ -3,10 +3,18 @@
  * https://github.com/web-infra-dev/rspack/blob/0a89e433a9f8596a7c6c4326542f168b5982d2da/packages/rspack/src/builtin-plugin/css-extract/loader.ts
  * 1. remove hmr/webpack runtime
  * 2. add `this.emitFile` to emit css files
- * 3. add `import './[name].css';`
+ * 3. add `import './[name].css';` to js module
  */
 import path, { extname } from 'node:path';
-import type { LoaderDefinition } from '@rspack/core';
+import type { Rspack } from '@rsbuild/core';
+import {
+  ABSOLUTE_PUBLIC_PATH,
+  AUTO_PUBLIC_PATH,
+  BASE_URI,
+  SINGLE_DOT_PATH_SEGMENT,
+} from './const';
+
+import { type CssLoaderOptionsAuto, isCssModulesFile } from './utils';
 
 interface DependencyDescription {
   identifier: string;
@@ -20,22 +28,29 @@ interface DependencyDescription {
   filepath: string;
 }
 
+// https://github.com/web-infra-dev/rspack/blob/c0986d39b7d647682f10fcef5bbade39fd016eca/packages/rspack/src/config/types.ts#L10
+type Filename = string | ((pathData: any, assetInfo?: any) => string);
+
 export interface CssExtractRspackLoaderOptions {
+  publicPath?: string | ((resourcePath: string, context: string) => string);
   emit?: boolean;
   esModule?: boolean;
   layer?: string;
   defaultExport?: boolean;
 
   rootDir?: string;
+  auto?: CssLoaderOptionsAuto;
+  banner?: string;
+  footer?: string;
 }
 
-const PLUGIN_NAME = 'LIB_CSS_EXTRACT_LOADER';
+const LOADER_NAME = 'LIB_CSS_EXTRACT_LOADER';
 
 function stringifyLocal(value: any) {
   return typeof value === 'function' ? value.toString() : JSON.stringify(value);
 }
 
-const loader: LoaderDefinition = function loader(content) {
+const loader: Rspack.LoaderDefinition = function loader(content) {
   if (
     this._compiler?.options?.experiments?.css &&
     this._module &&
@@ -49,7 +64,11 @@ const loader: LoaderDefinition = function loader(content) {
   return;
 };
 
-export const pitch: LoaderDefinition['pitch'] = function (request, _, _data) {
+export const pitch: Rspack.LoaderDefinition['pitch'] = function (
+  request,
+  _,
+  _data,
+) {
   if (
     this._compiler?.options?.experiments?.css &&
     this._module &&
@@ -72,6 +91,37 @@ export const pitch: LoaderDefinition['pitch'] = function (request, _, _data) {
   const callback = this.async();
   const filepath = this.resourcePath;
   const rootDir = options.rootDir ?? this.rootContext;
+  const auto = options.auto;
+  const banner = options.banner;
+  const footer = options.footer;
+
+  let { publicPath } = this._compilation.outputOptions;
+
+  if (typeof options.publicPath === 'string') {
+    // eslint-disable-next-line prefer-destructuring
+    publicPath = options.publicPath;
+  } else if (typeof options.publicPath === 'function') {
+    publicPath = options.publicPath(this.resourcePath, this.rootContext);
+  }
+
+  if (publicPath === 'auto') {
+    publicPath = AUTO_PUBLIC_PATH;
+  }
+
+  let publicPathForExtract: Filename | undefined;
+
+  if (typeof publicPath === 'string') {
+    const isAbsolutePublicPath = /^[a-zA-Z][a-zA-Z\d+\-.]*?:/.test(publicPath);
+
+    publicPathForExtract = isAbsolutePublicPath
+      ? publicPath
+      : `${ABSOLUTE_PUBLIC_PATH}${publicPath.replace(
+          /\./g,
+          SINGLE_DOT_PATH_SEGMENT,
+        )}`;
+  } else {
+    publicPathForExtract = publicPath;
+  }
 
   const handleExports = (
     originalExports:
@@ -162,8 +212,7 @@ export const pitch: LoaderDefinition['pitch'] = function (request, _, _data) {
 
           const localsString = identifiers
             .map(
-              ([id, key]) =>
-                `\nvar ${id} = ${stringifyLocal(locals![key as string])};`,
+              ([id, key]) => `\nvar ${id} = ${stringifyLocal(locals[key!])};`,
             )
             .join('');
           const exportsString = `export { ${identifiers
@@ -192,7 +241,7 @@ export const pitch: LoaderDefinition['pitch'] = function (request, _, _data) {
       return '';
     })();
 
-    let resultSource = `// extracted by ${PLUGIN_NAME}`;
+    let resultSource = `// extracted by ${LOADER_NAME}`;
 
     let importCssFiles = '';
 
@@ -212,14 +261,15 @@ export const pitch: LoaderDefinition['pitch'] = function (request, _, _data) {
 
     const m = new Map<string, string>();
 
-    for (const { content, filepath } of dependencies) {
+    for (const { content, filepath, sourceMap } of dependencies) {
       let distFilepath = getRelativePath(rootDir, filepath);
       const ext = extname(distFilepath);
       if (ext !== 'css') {
         distFilepath = distFilepath.replace(ext, '.css');
       }
-      distFilepath = distFilepath.replace(/\.module\.css/, '_module.css');
-
+      if (isCssModulesFile(filepath, auto)) {
+        distFilepath = distFilepath.replace(/\.module\.css/, '_module.css');
+      }
       const cssFilename = path.basename(distFilepath);
       if (content.trim()) {
         m.get(distFilepath)
@@ -229,8 +279,24 @@ export const pitch: LoaderDefinition['pitch'] = function (request, _, _data) {
         importCssFiles += '\n';
         importCssFiles += `import "./${cssFilename}"`;
       }
+      if (sourceMap) {
+        const sourceMapPath = `${distFilepath}.map`;
+        m.set(sourceMapPath, sourceMap);
+        // Associate the source map with the CSS file
+        const sourceMappingURL = `/*# sourceMappingURL=${cssFilename}.map */`;
+        m.set(distFilepath, `${m.get(distFilepath)}\n${sourceMappingURL}`);
+      }
     }
-    for (const [distFilepath, content] of m.entries()) {
+    for (let [distFilepath, content] of m.entries()) {
+      // add banner and footer to css files in bundleless mode
+      if (banner) {
+        content = `${banner}\n${content}`;
+      }
+
+      if (footer) {
+        content = `${content}\n${footer}\n`;
+      }
+
       this.emitFile(distFilepath, content);
     }
 
@@ -245,6 +311,8 @@ export const pitch: LoaderDefinition['pitch'] = function (request, _, _data) {
     `${this.resourcePath}.webpack[javascript/auto]!=!!!${request}`,
     {
       layer: options.layer,
+      publicPath: publicPathForExtract,
+      baseUri: `${BASE_URI}/`,
     },
     (error, exports) => {
       if (error) {

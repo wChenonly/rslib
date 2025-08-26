@@ -5,8 +5,9 @@ export default defineConfig({
   lib: [generateBundleEsmConfig(), generateBundleCjsConfig()],
   source: {
     entry: {
-      index: ['./src/index.ts'],
-      bar: ['./src/bar.ts'],
+      index: './src/index.ts',
+      foo: './src/foo.ts',
+      shared: './src/shared.ts',
     },
   },
 });

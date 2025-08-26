@@ -1,168 +1,427 @@
 import { logger } from '@rsbuild/core';
 import color from 'picocolors';
 import ts from 'typescript';
-import {
-  getFileLoc,
-  getTimeCost,
-  loadTsconfig,
-  processDtsFiles,
-} from './utils';
+import type { DtsRedirect } from './index';
+import { getTimeCost, processDtsFiles } from './utils';
+
+const logPrefixTsc = color.dim('[tsc]');
+
+const formatHost: ts.FormatDiagnosticsHost = {
+  getCanonicalFileName: (path) => path,
+  getCurrentDirectory: ts.sys.getCurrentDirectory.bind(ts.sys),
+  getNewLine: () => ts.sys.newLine,
+};
 
 export type EmitDtsOptions = {
   name: string;
   cwd: string;
   configPath: string;
+  tsConfigResult: ts.ParsedCommandLine;
   declarationDir: string;
   dtsExtension: string;
+  rootDir: string;
+  redirect: DtsRedirect;
+  paths: Record<string, string[]>;
   banner?: string;
   footer?: string;
 };
+
+async function handleDiagnosticsAndProcessFiles(
+  diagnostics: readonly ts.Diagnostic[],
+  configPath: string,
+  bundle: boolean,
+  declarationDir: string,
+  dtsExtension: string,
+  redirect: DtsRedirect,
+  rootDir: string,
+  paths: Record<string, string[]>,
+  banner?: string,
+  footer?: string,
+  name?: string,
+): Promise<void> {
+  const diagnosticMessages: string[] = [];
+
+  for (const diagnostic of diagnostics) {
+    const message = ts.formatDiagnosticsWithColorAndContext(
+      [diagnostic],
+      formatHost,
+    );
+    diagnosticMessages.push(message);
+  }
+
+  await processDtsFiles(
+    bundle,
+    declarationDir,
+    dtsExtension,
+    redirect,
+    configPath,
+    rootDir,
+    paths,
+    banner,
+    footer,
+  );
+
+  if (diagnosticMessages.length) {
+    for (const message of diagnosticMessages) {
+      logger.error(logPrefixTsc, message);
+    }
+
+    const error = new Error(
+      `Failed to generate declaration files. ${color.dim(`(${name})`)}`,
+    );
+    // do not log the stack trace, diagnostic messages are enough
+    error.stack = '';
+    throw error;
+  }
+}
 
 export async function emitDts(
   options: EmitDtsOptions,
   onComplete: (isSuccess: boolean) => void,
   bundle = false,
   isWatch = false,
+  build = false,
 ): Promise<void> {
   const start = Date.now();
-  const { configPath, declarationDir, name, dtsExtension, banner, footer } =
-    options;
+  const {
+    configPath,
+    tsConfigResult,
+    declarationDir,
+    name,
+    dtsExtension,
+    rootDir,
+    banner,
+    footer,
+    paths,
+    redirect,
+  } = options;
   const {
     options: rawCompilerOptions,
     fileNames,
     projectReferences,
-  } = loadTsconfig(configPath);
+  } = tsConfigResult;
 
   const compilerOptions = {
     ...rawCompilerOptions,
+    configFilePath: configPath,
     noEmit: false,
     declaration: true,
     declarationDir,
     emitDeclarationOnly: true,
   };
 
+  const createProgram = ts.createSemanticDiagnosticsBuilderProgram;
+
+  const reportDiagnostic = (diagnostic: ts.Diagnostic) => {
+    logger.error(
+      logPrefixTsc,
+      ts.formatDiagnosticsWithColorAndContext([diagnostic], formatHost),
+    );
+  };
+
+  const reportWatchStatusChanged: ts.WatchStatusReporter = async (
+    diagnostic: ts.Diagnostic,
+    _newLine: string,
+    _options: ts.CompilerOptions,
+    errorCount?: number,
+  ) => {
+    const message = `${ts.flattenDiagnosticMessageText(
+      diagnostic.messageText,
+      formatHost.getNewLine(),
+    )} ${color.dim(`(${name})`)}`;
+
+    // 6031: File change detected. Starting incremental compilation...
+    // 6032: Starting compilation in watch mode...
+    if (diagnostic.code === 6031 || diagnostic.code === 6032) {
+      logger.info(logPrefixTsc, message);
+    }
+
+    // 6194: 0 errors or 2+ errors!
+    if (diagnostic.code === 6194) {
+      if (errorCount === 0 || !errorCount) {
+        logger.info(logPrefixTsc, message);
+        onComplete(true);
+      } else {
+        logger.error(logPrefixTsc, message);
+      }
+      await processDtsFiles(
+        bundle,
+        declarationDir,
+        dtsExtension,
+        redirect,
+        configPath,
+        rootDir,
+        paths,
+        banner,
+        footer,
+      );
+    }
+
+    // 6193: 1 error
+    if (diagnostic.code === 6193) {
+      logger.error(logPrefixTsc, message);
+      await processDtsFiles(
+        bundle,
+        declarationDir,
+        dtsExtension,
+        redirect,
+        configPath,
+        rootDir,
+        paths,
+        banner,
+        footer,
+      );
+    }
+  };
+
+  const renameDtsFile = (fileName: string): string => {
+    if (bundle) {
+      return fileName;
+    }
+
+    if (fileName.endsWith('.d.ts.map')) {
+      return fileName.replace(/\.d\.ts\.map$/, `${dtsExtension}.map`);
+    }
+
+    return fileName.replace(/\.d\.ts$/, dtsExtension);
+  };
+
+  const updateDeclarationMapContent = (
+    fileName: string,
+    content: string,
+  ): string => {
+    if (bundle || !compilerOptions.declarationMap) {
+      return content;
+    }
+
+    if (fileName.endsWith('.d.ts')) {
+      return content.replace(
+        /(\/\/# sourceMappingURL=.+)\.d\.ts\.map/g,
+        `$1${dtsExtension}.map`,
+      );
+    }
+
+    if (fileName.endsWith('.d.ts.map')) {
+      return content.replace(/("file":"[^"]*)\.d\.ts"/g, `$1${dtsExtension}"`);
+    }
+
+    return content;
+  };
+
+  const system: ts.System = {
+    ...ts.sys,
+    writeFile: (fileName, contents, writeByteOrderMark) => {
+      const newFileName = renameDtsFile(fileName);
+      const newContents = updateDeclarationMapContent(fileName, contents);
+      ts.sys.writeFile(newFileName, newContents, writeByteOrderMark);
+    },
+  };
+
+  // build mode
   if (!isWatch) {
-    const host: ts.CompilerHost = ts.createCompilerHost(compilerOptions);
+    // normal build - npx tsc
+    if (!build && !compilerOptions.composite) {
+      const originHost: ts.CompilerHost =
+        ts.createCompilerHost(compilerOptions);
+      const host: ts.CompilerHost = {
+        ...originHost,
+        writeFile: (
+          fileName,
+          contents,
+          writeByteOrderMark,
+          onError,
+          sourceFiles,
+        ) => {
+          const newFileName = renameDtsFile(fileName);
+          const newContents = updateDeclarationMapContent(fileName, contents);
+          originHost.writeFile(
+            newFileName,
+            newContents,
+            writeByteOrderMark,
+            onError,
+            sourceFiles,
+          );
+        },
+      };
 
-    const program: ts.Program = ts.createProgram({
-      rootNames: fileNames,
-      options: compilerOptions,
-      projectReferences,
-      host,
-    });
+      const program: ts.Program = ts.createProgram({
+        rootNames: fileNames,
+        options: compilerOptions,
+        projectReferences,
+        host,
+        configFileParsingDiagnostics:
+          ts.getConfigFileParsingDiagnostics(tsConfigResult),
+      });
 
-    const emitResult = program.emit();
+      const preEmitDiagnostics = ts.getPreEmitDiagnostics(program);
+      const emitResult = program.emit();
+      const allDiagnostics = preEmitDiagnostics.concat(emitResult.diagnostics);
+      const sortAndDeduplicateDiagnostics =
+        ts.sortAndDeduplicateDiagnostics(allDiagnostics);
 
-    const allDiagnostics = ts
-      .getPreEmitDiagnostics(program)
-      .concat(emitResult.diagnostics);
+      await handleDiagnosticsAndProcessFiles(
+        sortAndDeduplicateDiagnostics,
+        configPath,
+        bundle,
+        declarationDir,
+        dtsExtension,
+        redirect,
+        rootDir,
+        paths,
+        banner,
+        footer,
+        name,
+      );
+    } else if (!build && compilerOptions.composite) {
+      // incremental build with composite true - npx tsc
+      const originHost: ts.CompilerHost =
+        ts.createIncrementalCompilerHost(compilerOptions);
+      const host: ts.CompilerHost = {
+        ...originHost,
+        writeFile: (
+          fileName,
+          contents,
+          writeByteOrderMark,
+          onError,
+          sourceFiles,
+        ) => {
+          const newFileName = renameDtsFile(fileName);
+          const newContents = updateDeclarationMapContent(fileName, contents);
+          originHost.writeFile(
+            newFileName,
+            newContents,
+            writeByteOrderMark,
+            onError,
+            sourceFiles,
+          );
+        },
+      };
 
-    const diagnosticMessages: string[] = [];
+      const program = ts.createIncrementalProgram({
+        rootNames: fileNames,
+        options: compilerOptions,
+        configFileParsingDiagnostics:
+          ts.getConfigFileParsingDiagnostics(tsConfigResult),
+        projectReferences,
+        host,
+        createProgram,
+      });
 
-    for (const diagnostic of allDiagnostics) {
-      const fileLoc = getFileLoc(diagnostic);
-      const message = `${fileLoc} - ${color.red('error')} ${color.gray(`TS${diagnostic.code}:`)} ${ts.flattenDiagnosticMessageText(
-        diagnostic.messageText,
-        host.getNewLine(),
-      )}`;
-      diagnosticMessages.push(message);
-    }
-
-    await processDtsFiles(bundle, declarationDir, dtsExtension, banner, footer);
-
-    if (diagnosticMessages.length) {
-      logger.error(
-        `Failed to emit declaration files. ${color.gray(`(${name})`)}`,
+      const allDiagnostics: ts.Diagnostic[] = [];
+      allDiagnostics.push(
+        ...program.getConfigFileParsingDiagnostics(),
+        ...program.getSyntacticDiagnostics(),
+        ...program.getOptionsDiagnostics(),
+        ...program.getGlobalDiagnostics(),
+        ...program.getSemanticDiagnostics(),
+        ...program.getDeclarationDiagnostics(),
       );
 
-      for (const message of diagnosticMessages) {
-        logger.error(message);
-      }
+      const emitResult = program.emit();
+      allDiagnostics.push(...emitResult.diagnostics);
 
-      throw new Error('DTS generation failed');
+      const sortAndDeduplicateDiagnostics =
+        ts.sortAndDeduplicateDiagnostics(allDiagnostics);
+
+      await handleDiagnosticsAndProcessFiles(
+        sortAndDeduplicateDiagnostics,
+        configPath,
+        bundle,
+        declarationDir,
+        dtsExtension,
+        redirect,
+        rootDir,
+        paths,
+        banner,
+        footer,
+        name,
+      );
+    } else {
+      // incremental build with build project references
+      // The equivalent of the `--build` flag for the tsc command.
+      let errorNumber = 0;
+      const reportErrorSummary = (errorCount: number) => {
+        errorNumber = errorCount;
+      };
+
+      const host = ts.createSolutionBuilderHost(
+        system,
+        createProgram,
+        reportDiagnostic,
+        undefined,
+        reportErrorSummary,
+      );
+
+      const solutionBuilder = ts.createSolutionBuilder(
+        host,
+        [configPath],
+        compilerOptions,
+      );
+
+      solutionBuilder.build();
+
+      await processDtsFiles(
+        bundle,
+        declarationDir,
+        dtsExtension,
+        redirect,
+        configPath,
+        rootDir,
+        paths,
+        banner,
+        footer,
+      );
+
+      if (errorNumber > 0) {
+        const error = new Error(
+          `Failed to generate declaration files. ${color.dim(`(${name})`)}`,
+        );
+        // do not log the stack trace, diagnostic messages are enough
+        error.stack = '';
+        throw error;
+      }
     }
 
-    logger.ready(
-      `DTS generated in ${getTimeCost(start)} ${color.gray(`(${name})`)}`,
-    );
+    if (bundle) {
+      logger.info(
+        `declaration files prepared in ${getTimeCost(start)} ${color.dim(`(${name})`)}`,
+      );
+    } else {
+      logger.ready(
+        `declaration files generated in ${getTimeCost(start)} ${color.dim(`(${name})`)}`,
+      );
+    }
   } else {
-    const createProgram = ts.createSemanticDiagnosticsBuilderProgram;
-    const formatHost: ts.FormatDiagnosticsHost = {
-      getCanonicalFileName: (path) => path,
-      getCurrentDirectory: ts.sys.getCurrentDirectory,
-      getNewLine: () => ts.sys.newLine,
-    };
-
-    const reportDiagnostic = (diagnostic: ts.Diagnostic) => {
-      const fileLoc = getFileLoc(diagnostic);
-
-      logger.error(
-        `${fileLoc} - ${color.red('error')} ${color.gray(`TS${diagnostic.code}:`)}`,
-        ts.flattenDiagnosticMessageText(
-          diagnostic.messageText,
-          formatHost.getNewLine(),
-        ),
+    // watch mode, can also deal with incremental build
+    if (!build) {
+      const host = ts.createWatchCompilerHost(
+        configPath,
+        compilerOptions,
+        system,
+        createProgram,
+        reportDiagnostic,
+        reportWatchStatusChanged,
       );
-    };
 
-    const reportWatchStatusChanged: ts.WatchStatusReporter = async (
-      diagnostic: ts.Diagnostic,
-      _newLine: string,
-      _options: ts.CompilerOptions,
-      errorCount?: number,
-    ) => {
-      const message = `${ts.flattenDiagnosticMessageText(
-        diagnostic.messageText,
-        formatHost.getNewLine(),
-      )} ${color.gray(`(${name})`)}`;
+      ts.createWatchProgram(host);
+    } else {
+      // incremental build watcher with build project references
+      const host = ts.createSolutionBuilderWithWatchHost(
+        system,
+        createProgram,
+        reportDiagnostic,
+        undefined,
+        reportWatchStatusChanged,
+      );
 
-      // 6031: File change detected. Starting incremental compilation...
-      // 6032: Starting compilation in watch mode...
-      if (diagnostic.code === 6031 || diagnostic.code === 6032) {
-        logger.info(message);
-      }
+      const solutionBuilder = ts.createSolutionBuilderWithWatch(
+        host,
+        [configPath],
+        compilerOptions,
+        { watch: true },
+      );
 
-      // 6194: 0 errors or 2+ errors!
-      if (diagnostic.code === 6194) {
-        if (errorCount === 0) {
-          logger.info(message);
-          onComplete(true);
-        } else {
-          logger.error(message);
-        }
-        await processDtsFiles(
-          bundle,
-          declarationDir,
-          dtsExtension,
-          banner,
-          footer,
-        );
-      }
-
-      // 6193: 1 error
-      if (diagnostic.code === 6193) {
-        logger.error(message);
-        await processDtsFiles(
-          bundle,
-          declarationDir,
-          dtsExtension,
-          banner,
-          footer,
-        );
-      }
-    };
-
-    const system = { ...ts.sys };
-
-    const host = ts.createWatchCompilerHost(
-      configPath,
-      compilerOptions,
-      system,
-      createProgram,
-      reportDiagnostic,
-      reportWatchStatusChanged,
-    );
-
-    ts.createWatchProgram(host);
+      solutionBuilder.build();
+    }
   }
 }

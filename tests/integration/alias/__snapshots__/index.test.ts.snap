@@ -1,4 +1,4 @@
-// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+// Rstest Snapshot v1
 
 exports[`source.alias 1`] = `
 "const a = 'hello world';
@@ -11,9 +11,26 @@ exports[`source.alias 2`] = `
 var __webpack_exports__ = {};
 const a = 'hello world';
 console.info(a);
-var __webpack_export_target__ = exports;
-for(var i in __webpack_exports__)__webpack_export_target__[i] = __webpack_exports__[i];
-if (__webpack_exports__.__esModule) Object.defineProperty(__webpack_export_target__, '__esModule', {
+for(var __webpack_i__ in __webpack_exports__)exports[__webpack_i__] = __webpack_exports__[__webpack_i__];
+Object.defineProperty(exports, '__esModule', {
+    value: true
+});
+"
+`;
+
+exports[`source.alias 3`] = `
+"import { a } from "./a.js";
+console.info(a);
+"
+`;
+
+exports[`source.alias 4`] = `
+""use strict";
+var __webpack_exports__ = {};
+const external_a_cjs_namespaceObject = require("./a.cjs");
+console.info(external_a_cjs_namespaceObject.a);
+for(var __webpack_i__ in __webpack_exports__)exports[__webpack_i__] = __webpack_exports__[__webpack_i__];
+Object.defineProperty(exports, '__esModule', {
     value: true
 });
 "

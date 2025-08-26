@@ -1,42 +1,34 @@
-# Module Federation
+import MF from '../start/components/MF.mdx';
+import { Tab, Tabs } from 'rspress/theme';
 
-本章节将介绍如何在 Rslib 中构建 Module Federation 产物。
+# 模块联邦
 
-## 名词解释
-
-Module Federation 是一种 JavaScript 应用分治的架构模式（类似于服务端的微服务），它允许你在多个 JavaScript 应用程序（或微前端）之间共享代码和资源。
+本章介绍如何在 Rslib 中构建 [模块联邦](/guide/basic/output-format#mf) 产物。
 
 ## 使用场景
 
 模块联邦有一些典型的使用场景，包括：
 
-- 允许独立应用（在微前端架构中称为"微前端"）之间共享模块，无需重新编译整个应用。
-- 不同的团队在不需要重新编译整个应用的情况下处理同一应用的不同部分。
-- 应用之间在运行时进行动态代码加载和共享。
+- 允许独立应用程序（微前端架构中称为“微前端”）共享模块，而无需重新编译整个应用。
+- 不同的团队处理同一应用程序的不同部分，而无需重新编译整个应用程序。
+- 运行时中在应用间动态加载和共享代码。
 
-模块联邦可以帮助你：
+模块联邦可以帮助你:
 
 - 减少代码重复
 - 提高代码可维护性
-- 降低应用程序的整体大小
-- 提高应用程序的性能
+- 减小应用程序的整体大小
+- 提高应用性能
 
-## 快速接入
+## 快速开始
 
-首先安装 Module Federation Rsbuild 插件（Rslib 基于 Rsbuild 实现）。
+首先安装 [Module Federation Rsbuild Plugin](https://www.npmjs.com/package/@module-federation/rsbuild-plugin).
 
 import { PackageManagerTabs } from '@theme';
 
-<PackageManagerTabs
-  command={{
-    npm: 'npm add @module-federation/rsbuild-plugin -D',
-    yarn: 'yarn add @module-federation/rsbuild-plugin -D',
-    pnpm: 'pnpm add @module-federation/rsbuild-plugin -D',
-    bun: 'bun add @module-federation/rsbuild-plugin -D',
-  }}
-/>
+<PackageManagerTabs command="add @module-federation/rsbuild-plugin -D" />
 
-将插件添加到 `rslib.config.ts` 中：
+然后在 `rslib.config.ts` 中注册插件:
 
 ```ts title='rslib.config.ts'
 import { pluginModuleFederation } from '@module-federation/rsbuild-plugin';
@@ -45,62 +37,250 @@ import { defineConfig } from '@rslib/core';
 
 export default defineConfig({
   lib: [
-    // ... other format
+    // ... 其他 format
+    // [!code highlight:37]
     {
       format: 'mf',
       output: {
         distPath: {
           root: './dist/mf',
         },
-        // add your assetPrefix here
+        // production 时, 在这里使用线上 assetPrefix
+        assetPrefix: 'http://localhost:3001/mf',
+      },
+      // Storybook 在 dev 下使用
+      dev: {
         assetPrefix: 'http://localhost:3001/mf',
       },
       plugins: [
-        pluginModuleFederation({
-          name: 'rslib_provider',
-          exposes: {
-            // add expose here
-          },
-          // can not add 'remote' here, because you may build 'esm' or 'cjs' assets in one build.
-          // if you want the rslib package use remote module, please see below.
-          shared: {
-            react: {
-              singleton: true,
+        pluginModuleFederation(
+          {
+            name: 'rslib_provider',
+            exposes: {
+              // 这里添加 expose
             },
-            'react-dom': {
-              singleton: true,
+            // 此处无法添加 "remote"，因为你可能会在一次构建中构建 "esm" 或 "cjs" 产物。
+            // 如果你希望 Rslib 包使用远程模块，请参考下面。
+            shared: {
+              react: {
+                singleton: true,
+              },
+              'react-dom': {
+                singleton: true,
+              },
             },
           },
-        }),
+          {},
+        ),
       ],
     },
   ],
+  // Storybook 在 dev 下使用
+  server: {
+    port: 3001,
+  },
+  output: {
+    target: 'web',
+  },
   plugins: [pluginReact()],
 });
 ```
 
-这样我们就完成了 Rslib Module 作为生产者的接入，构建完成后可以看到产物中新增了 mf 目录，消费者可以直接消费这个包。
+这样，我们就完成了对 Rslib Module 生产者的集成。构建完成后，我们可以看到产物中已经添加了 mf 目录，消费者可以直接消费这个包。
 
-在上面的例子中，我们设置了一个新的 `format: 'mf'`，这会帮助你生成一份额外的 Module Federation 产物，与此同时，还可以配置 `cjs` 和 `esm` 的 format，它们互相不冲突。
+在上面的例子中，我们添加了一个新的 `format: 'mf'` ，它将添加一个额外的模块联邦产物，同时还配置了 `cjs` 和 `esm` 的格式，它们是不冲突的。
 
-如果你希望这个 Rslib Module 同时可以消费其他生产者，请不要使用构建配置 `remote` 参数，因为在其他 format 中，这可能会导致错误，请参考下方使用 Module Federation 运行时的例子。
+但是，如果你希望此 Rslib 模块同时消费其他生产者，请不要使用构建配置 `remote` 参数，因为在其他格式下，这可能会导致错误，请参考下面使用 Module Federation 运行时的示例。
 
-## 消费其他 Module Federation 模块
+## 开发 MF 远程模块
 
-因为 Rslib 中有多种 format，如果在构建时配置 `remote` 参数来消费其他模块可能无法在所有 format 中都能正常工作，推荐通过 [Module Federation Runtime](https://module-federation.io/guide/basic/runtime.html) 进行接入
+### 使用宿主应用
+
+Rslib 支持宿主应用和 Rslib 模块联邦项目同时开发。
+
+#### 1. 启动库的 `rslib mf-dev` 命令
+
+添加 `dev` 命令在 `package.json` 文件:
+
+```json title="package.json"
+{
+  "scripts": {
+    "dev": "rslib mf-dev"
+  }
+}
+```
+
+然后运行 `dev` 命令即可启动模块联邦开发模式，可被宿主应用消费，
+同时具有模块热更新（HMR）功能。
+
+<PackageManagerTabs command="run dev" />
+
+#### 2. 启动宿主应用
+
+设置宿主应用消费 Rslib 的模块联邦库。查看[@module-federation/rsbuild-plugin
+](https://www.npmjs.com/package/@module-federation/rsbuild-plugin) 获取更多信息。
+
+```ts title="rsbuild.config.ts"
+import { pluginModuleFederation } from '@module-federation/rsbuild-plugin';
+import { defineConfig } from '@rsbuild/core';
+import { pluginReact } from '@rsbuild/plugin-react';
+
+export default defineConfig({
+  plugins: [
+    pluginReact(),
+    // [!code highlight:17]
+    pluginModuleFederation(
+      {
+        name: 'rsbuild_host',
+        remotes: {
+          rslib: 'rslib@http://localhost:3001/mf/mf-manifest.json',
+        },
+        shared: {
+          react: {
+            singleton: true,
+          },
+          'react-dom': {
+            singleton: true,
+          },
+        },
+        // 开启这个当 Rslib 产物为 'production' 模式， 但是宿主应用是 'development' 模式。
+        // 参考链接: https://rslib.rs/guide/advanced/module-federation#faqs
+        shareStrategy: 'loaded-first',
+      },
+      {},
+    ),
+  ],
+});
+```
+
+然后通过 `rsbuild dev` 启动宿主应用。
+
+### 使用 Storybook
+
+Rslib 支持使用 Storybook 开发 Rslib 模块联邦项目。
+
+#### 1. 启动库的 `rslib mf-dev` 命令
+
+添加 `dev` 命令在 `package.json` 文件:
+
+```json title="package.json"
+{
+  "scripts": {
+    "dev": "rslib mf-dev"
+  }
+}
+```
+
+然后运行 `dev` 命令即可启动模块联邦开发模式，可被 Storybook 消费，
+同时具有模块热更新（HMR）功能。
+
+<PackageManagerTabs command="run dev" />
+
+#### 2. 创建 Storybook 配置
+
+首先，在 Rslib 项目中配置 Storybook。你可以参考 [Storybook 章节](/guide/advanced/storybook)来了解如何执行此操作。在本章中，我们将使用 React 框架作为示例。
+
+1. 安装以下 Storybook addon，让 Storybook 与 Rslib 模块联邦一起使用:
+   - [storybook-addon-rslib](https://www.npmjs.com/package/storybook-addon-rslib): Storybook addon 会让 Storybook 加载 Rslib 配置.
+   - [@module-federation/storybook-addon](https://www.npmjs.com/package/@module-federation/rsbuild-plugin): Storybook 插件，为 Storybook 设置模块联邦配置。
+
+   <PackageManagerTabs command="add storybook-addon-rslib @module-federation/storybook-addon -D" />
+
+2. 然后创建 Storybook 配置文件 `.storybook/main.ts`，指定 stories 和 addons，并设置 framework 和相应的 framework 集成。
+
+```ts title=".storybook/main.ts"
+import { dirname, join } from 'node:path';
+import type { StorybookConfig } from 'storybook-react-rsbuild';
+
+function getAbsolutePath(value: string): any {
+  return dirname(require.resolve(join(value, 'package.json')));
+}
+
+const config: StorybookConfig = {
+  stories: [
+    '../stories/**/*.mdx',
+    '../stories/**/*.stories.@(js|jsx|mjs|ts|tsx)',
+  ],
+  framework: {
+    name: getAbsolutePath('storybook-react-rsbuild'),
+    options: {},
+  },
+  addons: [
+    // [!code highlight:21]
+    {
+      name: getAbsolutePath('storybook-addon-rslib'),
+      options: {
+        rslib: {
+          include: ['**/stories/**'],
+        },
+      },
+    },
+    {
+      name: '@module-federation/storybook-addon/preset',
+      options: {
+        // 在添加 rslib module manifest 给 storybook dev
+        // 我们在上面已经设置了 dev.assetPrefix 和 server.port 到 3001 在 rslib.config.ts
+        remotes: {
+          'rslib-module':
+            //还可以在这里添加 storybook 的 shared
+            // shared: {}
+            'rslib-module@http://localhost:3001/mf/mf-manifest.json',
+        },
+      },
+    },
+  ],
+};
+
+export default config;
+```
+
+#### 3. 用远程模块编写 stories
+
+从远程模块引入组件
+
+```ts title="stories/index.stories.tsx"
+import React from 'react';
+// [!code highlight:2]
+// 在这里加载远程模块，Storybook 相当于宿主应用.
+import { Counter } from 'rslib-module';
+
+const Component = () => <Counter />;
+
+export default {
+  title: 'App Component',
+  component: Component,
+};
+
+export const Primary = {};
+```
+
+#### 4. 在 `tsconfig.json` 中添加模块联邦类型和 stories 文件
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    // ...
+    "paths": {
+      "*": ["./@mf-types/*"]
+    }
+  },
+  "include": ["src/**/*", ".storybook/**/*", "stories/**/*"]
+}
+```
+
+#### 5. 启动 Storybook app
+
+大功告成，启动 Storybook `npx storybook dev`。
+
+## 使用其他模块联合模块
+
+由于 Rslib 中有多种格式，如果在构建时配置 `remote` 参数来消耗其他模块，则可能无法在所有格式下正常工作。建议通过以下方式访问 [Module Federation Runtime](https://module-federation.io/zh/guide/basic/runtime.html)
 
 首先安装运行时依赖
 
-<PackageManagerTabs
-  command={{
-    npm: 'npm add @module-federation/enhanced -D',
-    yarn: 'yarn add @module-federation/enhanced -D',
-    pnpm: 'pnpm add @module-federation/enhanced -D',
-    bun: 'bun add @module-federation/enhanced -D',
-  }}
-/>
+<PackageManagerTabs command="add @module-federation/enhanced -D" />
 
-然后在运行时消费其他 Module Federation 模块，例如
+然后在运行时使用其他模块联邦模块，例如
 
 ```ts
 import { init, loadRemote } from '@module-federation/enhanced/runtime';
@@ -134,25 +314,51 @@ export const Counter: React.FC = () => {
 };
 ```
 
-这样可以保证在多种 format 中都能按预期进行加载模块。
+这确保了模块可以按预期以多种格式加载。
 
-## 常见问题
+## FAQs
 
-如果 Rslib 生产者是通过 build 构建的，这意味着生产者的 `process.env.NODE_ENV` 是 `production`。如果这时消费者是 dev 模式启动的，
-由于 Module Federation 的 shared 加载策略默认是 `version-first`，可能会出现加载到不同模式的 react 和 react-dom 的问题（例如 development 模式的 react，production 模式的 react-dom）。
-这时可以在消费者处设置 [shareStrategy](https://module-federation.io/configure/sharestrategy) 来解决这个问题，但请确保您充分了解这个配置
+### 生产者与消费者构建模式不同时如何控制共享依赖的加载策略
+
+如果 Rslib 生产者是用 build 构建的， 这意味着生产者中的 `process.env.NODE_ENV` 是 `production` 。如果这时消费者是使用的开发模式启动，由于模块联邦默认使用共享的加载策略，可能会有 react 和 react-dom 加载模式不一致的问题 (比如 react 在 development mode, react-dom 在 production mode)。
+你可以在消费者设置 [shareStrategy](https://module-federation.io/zh/configure/sharestrategy) 来解决这个问题，这需要你确保已经完全理解了这个配置。
 
 ```ts
 pluginModuleFederation({
   // ...
   shareStrategy: 'loaded-first',
-}),
+}, {}),
+```
+
+### 如何让模块联邦产物生成 ES modules 的导出
+
+如果你希望 Rslib 生产者的模块联邦产物生成 ES Modules 的导出，可以额外配置如下：
+
+```ts title='rslib.config.ts'
+export default defineConfig({
+  lib: [
+    {
+      format: 'mf',
+      // ...
+      // [!code highlight:7]
+      tools: {
+        rspack(config) {
+          config.experiments = {
+            outputModule: true,
+          };
+        },
+      },
+    },
+  ],
+});
 ```
 
 ## 示例
 
-[Rslib Module Federation Example](https://github.com/web-infra-dev/rslib/tree/main/examples/module-federation)
+[Rslib 模块联邦示例](https://github.com/web-infra-dev/rslib/tree/main/examples/module-federation)
 
 - `mf-host`: Rsbuild App 消费者
-- `mf-react-component`: Rslib Module，同时是生产者和消费者，作为生产者提供模块给 `mf-host` 使用，作为消费者通过运行时消费 `mf-remote`
+- `mf-react-component`: Rslib Module, 同时是消费者和生产者, 作为生产者向 `mf-host` 提供模块， 并消费 `mf-remote`
 - `mf-remote`: Rsbuild App 生产者
+
+[Rslib 模块联邦 Storybook 示例](https://github.com/web-infra-dev/rslib/tree/main/examples/module-federation/mf-react-component)

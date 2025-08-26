@@ -1,6 +1,6 @@
 import { join } from 'node:path';
+import { expect, test } from '@rstest/core';
 import { buildAndGetResults } from 'test-helper';
-import { expect, test } from 'vitest';
 
 test('resolve data url', async () => {
   const fixturePath = join(__dirname, 'data-url');
@@ -8,7 +8,7 @@ test('resolve data url', async () => {
 
   expect(isSuccess).toBeTruthy();
   expect(entries.esm).toMatchInlineSnapshot(`
-    "/* ESM default export */ const javascript_export_default_42 = 42;
+    "const javascript_export_default_42 = 42;
     console.log('x:', javascript_export_default_42);
     "
   `);
@@ -30,8 +30,8 @@ test('resolve node protocol', async () => {
 
   expect(isSuccess).toBeTruthy();
   expect(entries.esm).toMatchInlineSnapshot(`
-    "import * as __WEBPACK_EXTERNAL_MODULE_node_path__ from "node:path";
-    const { join } = __WEBPACK_EXTERNAL_MODULE_node_path__["default"];
+    "import node_path from "node:path";
+    const { join } = node_path;
     export { join };
     "
   `);

@@ -1,7 +1,7 @@
 import { join } from 'node:path';
+import { expect, test } from '@rstest/core';
 import { buildAndGetResults } from 'test-helper';
-import { expectFileContainContent } from 'test-helper/vitest';
-import { expect, test } from 'vitest';
+import { expectFileContainContent } from 'test-helper/rstest';
 
 test('should extract css with lightningcss-loader successfully in bundle', async () => {
   const fixturePath = join(__dirname, 'bundle');
@@ -9,7 +9,7 @@ test('should extract css with lightningcss-loader successfully in bundle', async
   const esmFiles = Object.keys(contents.esm);
   expect(esmFiles).toMatchInlineSnapshot(`
     [
-      "<ROOT>/tests/integration/style/lightningcss/bundle/dist/esm/static/css/index.css",
+      "<ROOT>/tests/integration/style/lightningcss/bundle/dist/esm/index.css",
     ]
   `);
   expectFileContainContent(
@@ -21,7 +21,7 @@ test('should extract css with lightningcss-loader successfully in bundle', async
   const cjsFiles = Object.keys(contents.cjs);
   expect(cjsFiles).toMatchInlineSnapshot(`
     [
-      "<ROOT>/tests/integration/style/lightningcss/bundle/dist/cjs/static/css/index.css",
+      "<ROOT>/tests/integration/style/lightningcss/bundle/dist/cjs/index.css",
     ]
   `);
   expectFileContainContent(

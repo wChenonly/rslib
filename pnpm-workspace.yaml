@@ -5,4 +5,20 @@ packages:
   - 'tests/**'
   - 'examples/**'
   - '!**/compiled/**'
+  - '!**/compile/**'
   - '!**/dist-types/**'
+
+onlyBuiltDependencies:
+  - '@biomejs/biome'
+  - 'core-js'
+  - 'core-js-pure'
+  - 'esbuild'
+  - 'nx'
+  - 'simple-git-hooks'
+
+overrides:
+  'zx>@types/node': '-'
+
+strictPeerDependencies: false
+autoInstallPeers: false
+hoistPattern: []

@@ -6,6 +6,11 @@
   },
   {
     "type": "dir",
+    "name": "solution",
+    "label": "Solution"
+  },
+  {
+    "type": "dir",
     "name": "basic",
     "label": "Basic"
   },
@@ -18,11 +23,6 @@
     "type": "dir",
     "name": "migration",
     "label": "Migration"
-  },
-  {
-    "type": "dir",
-    "name": "debug",
-    "label": "Debug"
   },
   {
     "type": "dir",

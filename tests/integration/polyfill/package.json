@@ -1,0 +1,13 @@
+{
+  "name": "polyfill-test",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "core-js-pure": "^3.45.1"
+  },
+  "devDependencies": {
+    "@rsbuild/plugin-babel": "^1.0.6",
+    "babel-plugin-polyfill-corejs3": "^0.13.0"
+  }
+}

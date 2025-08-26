@@ -1,32 +1,89 @@
 import path from 'node:path';
+import { pluginSass } from '@rsbuild/plugin-sass';
+import { defineConfig } from '@rspress/core';
+import { pluginAlgolia } from '@rspress/plugin-algolia';
+import { pluginLlms } from '@rspress/plugin-llms';
+import { pluginRss } from '@rspress/plugin-rss';
+import {
+  transformerNotationDiff,
+  transformerNotationHighlight,
+} from '@shikijs/transformers';
 import { pluginGoogleAnalytics } from 'rsbuild-plugin-google-analytics';
+import { pluginOpenGraph } from 'rsbuild-plugin-open-graph';
 import { pluginFontOpenSans } from 'rspress-plugin-font-open-sans';
-import { defineConfig } from 'rspress/config';
+import pluginSitemap from 'rspress-plugin-sitemap';
+
+const siteUrl = 'https://rslib.rs';
+const description = 'The Rsbuild-based library development tool';
 
 export default defineConfig({
-  plugins: [pluginFontOpenSans()],
+  plugins: [
+    pluginAlgolia(),
+    pluginFontOpenSans(),
+    pluginLlms(),
+    pluginRss({
+      siteUrl,
+      feed: [
+        {
+          id: 'blog-rss',
+          test: /^\/blog\/.+/,
+          title: 'Rslib Blog',
+          language: 'en',
+          output: {
+            type: 'rss',
+            filename: 'blog-rss.xml',
+          },
+        },
+        {
+          id: 'blog-rss-zh',
+          test: /^\/zh\/blog\/.+/,
+          title: 'Rslib 博客',
+          language: 'zh-CN',
+          output: {
+            type: 'rss',
+            filename: 'blog-rss-zh.xml',
+          },
+        },
+      ],
+    }),
+    pluginSitemap({
+      domain: siteUrl,
+    }),
+  ],
   root: path.join(__dirname, 'docs'),
   lang: 'en',
-  base: '/',
   title: 'Rslib',
-  icon: 'https://assets.rspack.dev/rslib/rslib-logo-192x192.png',
-  logo: 'https://assets.rspack.dev/rslib/rslib-logo-192x192.png',
+  description:
+    'Rslib is a library development tool that leverages the well-designed configurations and plugins of Rsbuild.',
+  icon: 'https://assets.rspack.rs/rslib/rslib-logo-192x192.png',
+  logo: 'https://assets.rspack.rs/rslib/rslib-logo-192x192.png',
   logoText: 'Rslib',
-  ssg: {
-    strict: true,
-  },
   markdown: {
     checkDeadLinks: true,
+    shiki: {
+      transformers: [transformerNotationHighlight(), transformerNotationDiff()],
+    },
+  },
+  search: {
+    codeBlocks: true,
   },
   route: {
     cleanUrls: true,
     // exclude document fragments from routes
-    exclude: ['**/zh/shared/**', '**/en/shared/**', './theme'],
+    exclude: ['**/zh/shared/**', '**/en/shared/**'],
   },
-  themeConfig: {
-    footer: {
-      message: 'Copyright © 2024 ByteDance.',
+  head: [
+    ({ routePath }) => {
+      const getOgImage = () => {
+        if (routePath.endsWith('blog/introducing-rslib')) {
+          return 'assets/rslib-og-image-introducing.png';
+        }
+        return 'rslib-og-image.png';
+      };
+      return `<meta property="og:image" content="https://assets.rspack.rs/rslib/${getOgImage()}">`;
     },
+  ],
+  themeConfig: {
     socialLinks: [
       {
         icon: 'github',
@@ -49,7 +106,7 @@ export default defineConfig({
         lang: 'en',
         label: 'English',
         title: 'Rslib',
-        description: 'The Rsbuild-based library build tool',
+        description,
         editLink: {
           docRepoBaseUrl:
             'https://github.com/web-infra-dev/rslib/tree/main/website/docs',
@@ -67,6 +124,11 @@ export default defineConfig({
         searchNoResultsText: '无法找到相关搜索结果',
         searchSuggestedQueryText: '请使用不同的关键字重试',
         description: '基于 Rsbuild 的库构建工具',
+        overview: {
+          filterNameText: '过滤',
+          filterPlaceholderText: '输入关键词',
+          filterNoResultText: '未找到匹配的 API',
+        },
         editLink: {
           docRepoBaseUrl:
             'https://github.com/web-infra-dev/rslib/tree/main/website/docs',
@@ -79,13 +141,26 @@ export default defineConfig({
     dev: {
       lazyCompilation: true,
     },
-    source: {
+    resolve: {
       alias: {
         '@components': path.join(__dirname, '@components'),
         '@en': path.join(__dirname, 'docs/en'),
         '@zh': path.join(__dirname, 'docs/zh'),
       },
     },
-    plugins: [pluginGoogleAnalytics({ id: 'G-Q66CEHQ6JR' })],
+    plugins: [
+      pluginGoogleAnalytics({ id: 'G-Q66CEHQ6JR' }),
+      pluginSass(),
+      pluginOpenGraph({
+        title: 'Rslib',
+        type: 'website',
+        url: siteUrl,
+        description,
+        twitter: {
+          site: '@rspack_dev',
+          card: 'summary_large_image',
+        },
+      }),
+    ],
   },
 });

@@ -1,26 +1,49 @@
-import { fork } from 'node:child_process';
+import { type ChildProcess, fork } from 'node:child_process';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type RsbuildConfig, type RsbuildPlugin, logger } from '@rsbuild/core';
-import { processSourceEntry } from './utils';
+import { logger, type RsbuildConfig, type RsbuildPlugin } from '@rsbuild/core';
+import color from 'picocolors';
+import ts from 'typescript';
+import {
+  cleanDtsFiles,
+  cleanTsBuildInfoFile,
+  clearTempDeclarationDir,
+  getDtsEmitPath,
+  loadTsconfig,
+  processSourceEntry,
+  warnIfOutside,
+} from './utils';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+export type DtsRedirect = {
+  path?: boolean;
+  extension?: boolean;
+};
+
+export type ApiExtractorOptions = {
+  bundledPackages?: string[];
+};
+
 export type PluginDtsOptions = {
-  bundle?: boolean;
+  bundle?: boolean | ApiExtractorOptions;
   distPath?: string;
+  build?: boolean;
   abortOnError?: boolean;
   dtsExtension?: string;
+  alias?: Record<string, string>;
   autoExternal?:
     | boolean
     | {
         dependencies?: boolean;
-        devDependencies?: boolean;
+        optionalDependencies?: boolean;
         peerDependencies?: boolean;
+        devDependencies?: boolean;
       };
   banner?: string;
   footer?: string;
+  redirect?: DtsRedirect;
 };
 
 export type DtsEntry = {
@@ -28,13 +51,18 @@ export type DtsEntry = {
   path?: string;
 };
 
-export type DtsGenOptions = PluginDtsOptions & {
+export type DtsGenOptions = Omit<PluginDtsOptions, 'bundle'> & {
+  bundle: boolean;
   name: string;
   cwd: string;
   isWatch: boolean;
-  dtsEntry: DtsEntry;
-  tsconfigPath?: string;
+  dtsEntry: DtsEntry[];
+  dtsEmitPath: string;
+  build?: boolean;
+  tsconfigPath: string;
+  tsConfigResult: ts.ParsedCommandLine;
   userExternals?: NonNullable<RsbuildConfig['output']>['externals'];
+  apiExtractorOptions?: ApiExtractorOptions;
 };
 
 interface TaskResult {
@@ -46,47 +74,106 @@ export const PLUGIN_DTS_NAME = 'rsbuild:dts';
 
 // use ts compiler API to generate bundleless dts
 // use ts compiler API and api-extractor to generate dts bundle
-// TODO: support incremental build, to build one or more projects and their dependencies
-// TODO: deal alias in dts
-export const pluginDts = (options: PluginDtsOptions): RsbuildPlugin => ({
+export const pluginDts = (options: PluginDtsOptions = {}): RsbuildPlugin => ({
   name: PLUGIN_DTS_NAME,
 
   setup(api) {
-    options.bundle = options.bundle ?? false;
+    let apiExtractorOptions = {};
+
+    if (options.bundle && typeof options.bundle === 'object') {
+      apiExtractorOptions = {
+        ...options.bundle,
+      };
+    }
+
+    const bundle = !!options.bundle;
     options.abortOnError = options.abortOnError ?? true;
+    options.build = options.build ?? false;
+    options.redirect = options.redirect ?? {};
+    options.redirect.path = options.redirect.path ?? true;
+    options.redirect.extension = options.redirect.extension ?? false;
+    options.alias = options.alias ?? {};
 
     const dtsPromises: Promise<TaskResult>[] = [];
     let promisesResult: TaskResult[] = [];
+    let childProcesses: ChildProcess[] = [];
 
     api.onBeforeEnvironmentCompile(
-      ({ isWatch, isFirstCompile, environment }) => {
+      async ({ isWatch, isFirstCompile, environment }) => {
         if (!isFirstCompile) {
           return;
         }
 
         const { config } = environment;
 
-        options.distPath = options.distPath ?? config.output?.distPath?.root;
+        // @microsoft/api-extractor only support single entry to bundle declaration files
+        // see https://github.com/microsoft/rushstack/issues/1596#issuecomment-546790721
+        // we support multiple entries by calling api-extractor multiple times
+        const dtsEntry = processSourceEntry(bundle, config.source?.entry);
+
+        const cwd = api.context.rootPath;
+        const tsconfigPath = ts.findConfigFile(
+          cwd,
+          ts.sys.fileExists.bind(ts.sys),
+          config.source.tsconfigPath,
+        );
+
+        if (!tsconfigPath) {
+          const error = new Error(
+            `Failed to resolve tsconfig file ${color.cyan(`"${config.source.tsconfigPath}"`)} from ${color.cyan(cwd)}. Please ensure that the file exists.`,
+          );
+          error.stack = '';
+          // do not log the stack trace, it is not helpful for users
+          throw error;
+        }
+
+        const tsConfigResult = loadTsconfig(tsconfigPath);
+        const { options: rawCompilerOptions } = tsConfigResult;
+        const { declarationDir, outDir, composite, incremental } =
+          rawCompilerOptions;
+        const dtsEmitPath = getDtsEmitPath(
+          options.distPath,
+          declarationDir,
+          config.output?.distPath?.root,
+        );
+
+        // check whether declarationDir or outDir is outside from current project
+        warnIfOutside(cwd, declarationDir, 'declarationDir');
+        warnIfOutside(cwd, outDir, 'outDir');
+
+        // clean dts files
+        if (config.output.cleanDistPath !== false) {
+          await cleanDtsFiles(dtsEmitPath);
+        }
+
+        // clean .rslib temp folder
+        if (bundle) {
+          await clearTempDeclarationDir(cwd);
+        }
+
+        // clean tsbuildinfo file
+        if (composite || incremental || options.build) {
+          await cleanTsBuildInfoFile(tsconfigPath, rawCompilerOptions);
+        }
 
         const jsExtension = extname(__filename);
         const childProcess = fork(join(__dirname, `./dts${jsExtension}`), [], {
           stdio: 'inherit',
         });
 
-        // TODO: @microsoft/api-extractor only support single entry to bundle DTS
-        // use first element of Record<string, string> type entry config
-        const dtsEntry = processSourceEntry(
-          options.bundle!,
-          config.source?.entry,
-        );
+        childProcesses.push(childProcess);
 
         const dtsGenOptions: DtsGenOptions = {
           ...options,
+          bundle,
           dtsEntry,
+          dtsEmitPath,
           userExternals: config.output.externals,
-          tsconfigPath: config.source.tsconfigPath,
+          apiExtractorOptions,
+          tsconfigPath,
+          tsConfigResult,
           name: environment.name,
-          cwd: api.context.rootPath,
+          cwd,
           isWatch,
         };
 
@@ -102,7 +189,7 @@ export const pluginDts = (options: PluginDtsOptions): RsbuildPlugin => ({
               } else if (message === 'error') {
                 resolve({
                   status: 'error',
-                  errorMessage: `Error occurred in ${environment.name} DTS generation`,
+                  errorMessage: `Error occurred in ${environment.name} declaration files generation.`,
                 });
               }
             });
@@ -111,33 +198,54 @@ export const pluginDts = (options: PluginDtsOptions): RsbuildPlugin => ({
       },
     );
 
-    api.onAfterBuild(async ({ isFirstCompile }) => {
-      if (!isFirstCompile) {
-        return;
-      }
-
-      promisesResult = await Promise.all(dtsPromises);
-    });
-
     api.onAfterBuild({
-      handler: ({ isFirstCompile }) => {
+      handler: async ({ isFirstCompile }) => {
         if (!isFirstCompile) {
           return;
         }
 
-        for (const result of promisesResult) {
-          if (result.status === 'error') {
-            if (options.abortOnError) {
-              throw new Error(result.errorMessage);
-            }
-            result.errorMessage && logger.error(result.errorMessage);
-            logger.warn(
-              'With the `abortOnError` configuration currently turned off, type errors do not cause build failures, but they do not guarantee proper type file output.',
-            );
-          }
-        }
+        promisesResult = await Promise.all(dtsPromises);
       },
-      order: 'post',
+      // Set the order to 'pre' to ensure that when declaration files of multiple formats are generated simultaneously,
+      // all errors are thrown together before exiting the process.
+      order: 'pre',
     });
+
+    api.onAfterBuild(({ isFirstCompile }) => {
+      if (!isFirstCompile) {
+        return;
+      }
+
+      for (const result of promisesResult) {
+        if (result.status === 'error') {
+          if (options.abortOnError) {
+            const error = new Error(result.errorMessage);
+            // do not log the stack trace, it is not helpful for users
+            error.stack = '';
+            throw error;
+          }
+          result.errorMessage && logger.error(result.errorMessage);
+          logger.warn(
+            'With `abortOnError` configuration currently disabled, type errors will not fail the build, but proper type declaration output cannot be guaranteed.',
+          );
+        }
+      }
+    });
+
+    const killProcesses = () => {
+      for (const childProcess of childProcesses) {
+        if (!childProcess.killed) {
+          try {
+            childProcess.kill();
+            // mute kill error, such as: kill EPERM error on windows
+            // https://github.com/nodejs/node/issues/51766
+          } catch (_err) {}
+        }
+      }
+      childProcesses = [];
+    };
+
+    api.onCloseBuild(killProcesses);
+    api.onCloseDevServer(killProcesses);
   },
 });

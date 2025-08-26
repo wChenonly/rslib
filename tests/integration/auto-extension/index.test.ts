@@ -1,6 +1,10 @@
 import { extname, join } from 'node:path';
-import { buildAndGetResults } from 'test-helper';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test } from '@rstest/core';
+import {
+  buildAndGetResults,
+  generateFileTree,
+  queryContent,
+} from 'test-helper';
 
 describe('autoExtension: true', () => {
   test('generate .mjs in build artifacts with esm format when type is commonjs', async () => {
@@ -34,22 +38,106 @@ describe('autoExtension: false', () => {
   });
 });
 
-describe('should respect output.filename.js to override builtin logic', () => {
+describe('should respect output.filename.js and output.filenameHash to override builtin logic', () => {
   test('type is commonjs', async () => {
     const fixturePath = join(__dirname, 'type-commonjs', 'config-override');
     const { entryFiles } = await buildAndGetResults({ fixturePath });
-    expect(extname(entryFiles.esm!)).toEqual('.mjs');
-    expect(entryFiles.cjs).toMatchInlineSnapshot(
-      `"<ROOT>/tests/integration/auto-extension/type-commonjs/config-override/dist/cjs/index.d08e1bb3.js"`,
+
+    // override output.filename.js
+    expect(extname(entryFiles.esm0!)).toEqual('.mjs');
+    expect(entryFiles.cjs0).toMatchInlineSnapshot(
+      `"<ROOT>/tests/integration/auto-extension/type-commonjs/config-override/dist/cjs-override-filename/index.df02628a.js"`,
     );
+
+    // override output.filenameHash
+    expect(entryFiles.esm1).toMatchInlineSnapshot(
+      `"<ROOT>/tests/integration/auto-extension/type-commonjs/config-override/dist/esm-override-filename-hash/index.996a7edd.js"`,
+    );
+    expect(entryFiles.cjs1).toMatchInlineSnapshot(
+      `"<ROOT>/tests/integration/auto-extension/type-commonjs/config-override/dist/cjs-override-filename-hash/index.df02628a.js"`,
+    );
+
+    // override different file types with function
+    const fileTree = generateFileTree(
+      join(fixturePath, './dist/cjs-override-filename-function'),
+    );
+    expect(fileTree).toMatchInlineSnapshot(`
+      {
+        "bar-image.js": "<ROOT>/tests/integration/auto-extension/type-commonjs/config-override/dist/cjs-override-filename-function/bar-image.js",
+        "bar-index.js": "<ROOT>/tests/integration/auto-extension/type-commonjs/config-override/dist/cjs-override-filename-function/bar-index.js",
+        "static": {
+          "image": {
+            "foo-image.png": "<ROOT>/tests/integration/auto-extension/type-commonjs/config-override/dist/cjs-override-filename-function/static/image/foo-image.png",
+          },
+        },
+      }
+    `);
   });
 
   test('type is module', async () => {
     const fixturePath = join(__dirname, 'type-module', 'config-override');
     const { entryFiles } = await buildAndGetResults({ fixturePath });
-    expect(entryFiles.esm).toMatchInlineSnapshot(
-      `"<ROOT>/tests/integration/auto-extension/type-module/config-override/dist/esm/index.d2068839.js"`,
+
+    // override output.filename.js
+    expect(entryFiles.esm0).toMatchInlineSnapshot(
+      `"<ROOT>/tests/integration/auto-extension/type-module/config-override/dist/esm-override-filename/index.996a7edd.js"`,
     );
-    expect(extname(entryFiles.cjs!)).toEqual('.cjs');
+    expect(extname(entryFiles.cjs0!)).toEqual('.cjs');
+
+    // override output.filenameHash
+    expect(entryFiles.esm1).toMatchInlineSnapshot(
+      `"<ROOT>/tests/integration/auto-extension/type-module/config-override/dist/esm-override-filename-hash/index.996a7edd.js"`,
+    );
+    expect(entryFiles.cjs1).toMatchInlineSnapshot(
+      `"<ROOT>/tests/integration/auto-extension/type-module/config-override/dist/cjs-override-filename-hash/index.df02628a.js"`,
+    );
+
+    // override different file types with function
+    const fileTree = generateFileTree(
+      join(fixturePath, './dist/esm-override-filename-function'),
+    );
+    expect(fileTree).toMatchInlineSnapshot(`
+      {
+        "bar-image.js": "<ROOT>/tests/integration/auto-extension/type-module/config-override/dist/esm-override-filename-function/bar-image.js",
+        "bar-index.js": "<ROOT>/tests/integration/auto-extension/type-module/config-override/dist/esm-override-filename-function/bar-index.js",
+        "static": {
+          "image": {
+            "foo-image.png": "<ROOT>/tests/integration/auto-extension/type-module/config-override/dist/esm-override-filename-function/static/image/foo-image.png",
+          },
+        },
+      }
+    `);
+  });
+});
+
+describe('ESM output should add main files automatically', () => {
+  test('type is commonjs', async () => {
+    const fixturePath = join(__dirname, 'type-commonjs', 'false-bundleless');
+    const { contents } = await buildAndGetResults({ fixturePath });
+    const { path: indexFile } = queryContent(contents.esm, 'index.js', {
+      basename: true,
+    });
+
+    expect(await import(indexFile)).toMatchInlineSnapshot(`
+      {
+        "bar": "bar",
+        "foo": "foo",
+      }
+    `);
+  });
+
+  test('type is module', async () => {
+    const fixturePath = join(__dirname, 'type-module', 'false-bundleless');
+    const { contents } = await buildAndGetResults({ fixturePath });
+    const { path: indexFile } = queryContent(contents.esm, 'index.js', {
+      basename: true,
+    });
+
+    expect(await import(indexFile)).toMatchInlineSnapshot(`
+      {
+        "bar": "bar",
+        "foo": "foo",
+      }
+    `);
   });
 });

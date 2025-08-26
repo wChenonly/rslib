@@ -1,13 +1,10 @@
 [
-  "package-json",
-  "templates",
   "third-party-deps",
-  "polyfill",
-  "css",
-  "assets",
+  "output-compatibility",
   "dts",
+  "static-assets",
+  "svgr-files",
+  "json-files",
   "module-federation",
-  "module-doc",
-  "storybook",
-  "monorepo"
+  "storybook"
 ]

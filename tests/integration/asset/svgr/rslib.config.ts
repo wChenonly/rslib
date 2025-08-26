@@ -1,76 +1,167 @@
 import { pluginReact } from '@rsbuild/plugin-react';
 import { pluginSvgr } from '@rsbuild/plugin-svgr';
 import { defineConfig } from '@rslib/core';
-import { generateBundleEsmConfig } from 'test-helper';
+import { generateBundleCjsConfig, generateBundleEsmConfig } from 'test-helper';
 
 export default defineConfig({
   lib: [
+    // 0. bundle
+    // esm
     generateBundleEsmConfig({
-      source: {
-        entry: {
-          index: './src/index.js',
-        },
-      },
       output: {
         distPath: {
           root: './dist/esm/bundle-default',
         },
       },
-      plugins: [pluginSvgr()],
+      plugins: [
+        pluginSvgr({
+          mixedImport: true,
+        }),
+      ],
     }),
-    generateBundleEsmConfig({
-      source: {
-        entry: {
-          index: './src/index.js',
+    // cjs
+    generateBundleCjsConfig({
+      output: {
+        distPath: {
+          root: './dist/cjs/bundle-default',
         },
       },
+      plugins: [
+        pluginSvgr({
+          mixedImport: true,
+        }),
+      ],
+    }),
+    // 1. bundleless mixedImport
+    // esm
+    generateBundleEsmConfig({
       bundle: false,
-      output: {
-        distPath: {
-          root: './dist/esm/bundleless-default',
-        },
-      },
-      plugins: [pluginSvgr()],
-    }),
-    generateBundleEsmConfig({
       source: {
         entry: {
-          index: './src/namedExport.js',
+          index: ['src', '!src/css-entry.css'],
         },
       },
       output: {
         distPath: {
-          root: './dist/esm/bundle-named',
+          root: './dist/esm/bundleless-mixed',
+        },
+      },
+      plugins: [
+        pluginSvgr({
+          mixedImport: true,
+        }),
+      ],
+    }),
+    // cjs
+    generateBundleCjsConfig({
+      bundle: false,
+      source: {
+        entry: {
+          index: ['src', '!src/css-entry.css'],
+        },
+      },
+      output: {
+        distPath: {
+          root: './dist/cjs/bundleless-mixed',
+        },
+      },
+      plugins: [
+        pluginSvgr({
+          mixedImport: true,
+        }),
+      ],
+    }),
+    // 2. bundleless only svgr
+    // esm
+    generateBundleEsmConfig({
+      bundle: false,
+      source: {
+        entry: {
+          index: ['src', '!src/css-entry.css'],
+        },
+      },
+      output: {
+        distPath: {
+          root: './dist/esm/bundleless-only-svgr',
         },
       },
       plugins: [
         pluginSvgr({
           svgrOptions: {
-            exportType: 'named',
+            exportType: 'default',
+          },
+          exclude: /logo2\.svg$/,
+        }),
+      ],
+    }),
+    // cjs
+    generateBundleCjsConfig({
+      bundle: false,
+      source: {
+        entry: {
+          index: ['src', '!src/css-entry.css'],
+        },
+      },
+      output: {
+        distPath: {
+          root: './dist/cjs/bundleless-only-svgr',
+        },
+      },
+      plugins: [
+        pluginSvgr({
+          svgrOptions: {
+            exportType: 'default',
+          },
+          exclude: /logo2\.svg$/,
+        }),
+      ],
+    }),
+    // 3. bundleless svg in css
+    // esm
+    generateBundleEsmConfig({
+      bundle: false,
+      source: {
+        entry: {
+          index: ['src/css-entry.css'],
+        },
+      },
+      output: {
+        distPath: {
+          root: './dist/esm/bundleless-css-svg',
+        },
+      },
+      plugins: [
+        pluginSvgr({
+          svgrOptions: {
+            exportType: 'default',
           },
         }),
       ],
     }),
-    generateBundleEsmConfig({
+    // cjs
+    generateBundleCjsConfig({
+      bundle: false,
       source: {
         entry: {
-          index: './src/namedExport.js',
+          index: ['src/css-entry.css'],
         },
       },
-      bundle: false,
       output: {
         distPath: {
-          root: './dist/esm/bundleless-named',
+          root: './dist/cjs/bundleless-css-svg',
         },
       },
       plugins: [
         pluginSvgr({
           svgrOptions: {
-            exportType: 'named',
+            exportType: 'default',
           },
         }),
       ],
     }),
   ],
+  output: {
+    target: 'web',
+  },
   plugins: [pluginReact()],
 });

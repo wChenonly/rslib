@@ -1,14 +1,21 @@
 import fs from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative } from 'node:path';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+  resolve,
+} from 'node:path';
 import { logger } from '@rsbuild/core';
 import color from 'picocolors';
-import ts from 'typescript';
-import type { DtsGenOptions } from './index';
+import type { DtsEntry, DtsGenOptions } from './index';
 import { emitDts } from './tsc';
 import {
   calcLongestCommonPath,
   ensureTempDeclarationDir,
-  loadTsconfig,
+  mergeAliasWithTsConfigPaths,
 } from './utils';
 
 const isObject = (obj: unknown): obj is Record<string, any> =>
@@ -16,11 +23,16 @@ const isObject = (obj: unknown): obj is Record<string, any> =>
 
 // use !externals
 export const calcBundledPackages = (options: {
-  autoExternal: DtsGenOptions['autoExternal'];
   cwd: string;
+  autoExternal: DtsGenOptions['autoExternal'];
   userExternals?: DtsGenOptions['userExternals'];
+  overrideBundledPackages?: string[];
 }): string[] => {
-  const { autoExternal, cwd, userExternals } = options;
+  const { cwd, autoExternal, userExternals, overrideBundledPackages } = options;
+
+  if (overrideBundledPackages) {
+    return overrideBundledPackages;
+  }
 
   let pkgJson: {
     dependencies?: Record<string, string>;
@@ -32,7 +44,7 @@ export const calcBundledPackages = (options: {
   try {
     const content = fs.readFileSync(join(cwd, 'package.json'), 'utf-8');
     pkgJson = JSON.parse(content);
-  } catch (err) {
+  } catch (_err) {
     logger.warn(
       'The type of third-party packages will not be bundled due to read package.json failed',
     );
@@ -105,81 +117,122 @@ export const calcBundledPackages = (options: {
 export async function generateDts(data: DtsGenOptions): Promise<void> {
   const {
     bundle,
-    distPath,
     dtsEntry,
+    dtsEmitPath,
     tsconfigPath,
+    tsConfigResult,
     name,
     cwd,
+    build,
     isWatch,
     dtsExtension = '.d.ts',
     autoExternal = true,
+    alias = {},
     userExternals,
+    apiExtractorOptions,
     banner,
     footer,
+    redirect = {
+      path: true,
+      extension: false,
+    },
   } = data;
-  logger.start(`Generating DTS... ${color.gray(`(${name})`)}`);
-  const configPath = ts.findConfigFile(cwd, ts.sys.fileExists, tsconfigPath);
-  if (!configPath) {
-    logger.error(`tsconfig.json not found in ${cwd}`);
-    throw new Error();
+  if (!isWatch) {
+    logger.start(`generating declaration files... ${color.dim(`(${name})`)}`);
   }
-  const { options: rawCompilerOptions, fileNames } = loadTsconfig(configPath);
+
+  // merge alias and tsconfig paths
+  const paths = mergeAliasWithTsConfigPaths(
+    tsConfigResult.options.paths,
+    alias,
+  );
+  if (Object.keys(paths).length > 0) {
+    tsConfigResult.options.paths = paths;
+  }
+
+  const { options: rawCompilerOptions, fileNames } = tsConfigResult;
+
+  // The longest common path of all non-declaration input files.
+  // If composite is set, the default is instead the directory containing the tsconfig.json file.
+  // see https://www.typescriptlang.org/tsconfig/#rootDir
   const rootDir =
     rawCompilerOptions.rootDir ??
-    (await calcLongestCommonPath(fileNames)) ??
-    dirname(configPath);
+    (rawCompilerOptions.composite
+      ? dirname(tsconfigPath)
+      : await calcLongestCommonPath(
+          fileNames.filter((fileName) => !/\.d\.(ts|mts|cts)$/.test(fileName)),
+        )) ??
+    dirname(tsconfigPath);
 
-  const outDir = distPath
-    ? distPath
-    : rawCompilerOptions.declarationDir || './dist';
+  const resolvedDtsEmitPath = normalize(
+    resolve(dirname(tsconfigPath), dtsEmitPath),
+  );
 
-  const getDeclarationDir = (bundle: boolean, distPath?: string) => {
+  if (build) {
+    // do not allow to use bundle declaration files when 'build: true' since temp declarationDir should be set by user in tsconfig
     if (bundle) {
-      return ensureTempDeclarationDir(cwd);
+      throw Error(`Can not set "dts.bundle: true" when "dts.build: true"`);
     }
-    return distPath
-      ? distPath
-      : (rawCompilerOptions.declarationDir ?? './dist');
-  };
 
-  const declarationDir = getDeclarationDir(bundle!, distPath);
-  const { name: entryName, path: entryPath } = dtsEntry;
-  let entry = '';
+    // can not set '--declarationDir' or '--outDir' when 'build: true'.
+    if (
+      (!rawCompilerOptions.outDir ||
+        normalize(rawCompilerOptions.outDir) !== resolvedDtsEmitPath) &&
+      (!rawCompilerOptions.declarationDir ||
+        normalize(rawCompilerOptions.declarationDir) !== resolvedDtsEmitPath)
+    ) {
+      throw Error(
+        `Please set "declarationDir": "${dtsEmitPath}" in ${color.underline(
+          tsconfigPath,
+        )} to keep it same as "dts.distPath" or "output.distPath.root" field in lib config.`,
+      );
+    }
+  }
 
-  if (bundle === true && entryPath) {
-    const entrySourcePath = isAbsolute(entryPath)
-      ? entryPath
-      : join(cwd, entryPath);
-    const relativePath = relative(rootDir, dirname(entrySourcePath));
-    entry = join(
-      declarationDir!,
-      relativePath,
-      basename(entrySourcePath),
-    ).replace(
-      /\.(js|mjs|jsx|ts|mts|tsx|cjs|cts|cjsx|ctsx|mjsx|mtsx)$/,
-      '.d.ts',
-    );
+  const declarationDir = bundle
+    ? ensureTempDeclarationDir(cwd, name)
+    : dtsEmitPath;
+
+  let dtsEntries: Required<DtsEntry>[] = [];
+  if (bundle) {
+    dtsEntries = dtsEntry
+      .map((entryObj) => {
+        const { name: entryName, path: entryPath } = entryObj;
+        if (!entryPath) return null;
+        const entrySourcePath = isAbsolute(entryPath)
+          ? entryPath
+          : join(cwd, entryPath);
+        const relativePath = relative(rootDir, dirname(entrySourcePath));
+        const newPath = join(
+          declarationDir,
+          relativePath,
+          basename(entrySourcePath),
+        ).replace(
+          /\.(js|mjs|jsx|ts|mts|tsx|cjs|cts|cjsx|ctsx|mjsx|mtsx)$/,
+          '.d.ts',
+        );
+        return { name: entryName, path: newPath };
+      })
+      .filter(Boolean) as Required<DtsEntry>[];
   }
 
   const bundleDtsIfNeeded = async () => {
-    if (bundle === true) {
+    if (bundle) {
       const { bundleDts } = await import('./apiExtractor');
       await bundleDts({
         name,
         cwd,
-        outDir,
-        dtsEntry: {
-          name: entryName,
-          path: entry,
-        },
+        distPath: dtsEmitPath,
+        dtsEntry: dtsEntries,
         tsconfigPath,
         dtsExtension,
         banner,
         footer,
         bundledPackages: calcBundledPackages({
-          autoExternal,
           cwd,
+          autoExternal,
           userExternals,
+          overrideBundledPackages: apiExtractorOptions?.bundledPackages,
         }),
       });
     }
@@ -187,7 +240,11 @@ export async function generateDts(data: DtsGenOptions): Promise<void> {
 
   const onComplete = async (isSuccess: boolean) => {
     if (isSuccess) {
-      await bundleDtsIfNeeded();
+      try {
+        await bundleDtsIfNeeded();
+      } catch (e) {
+        logger.error(e);
+      }
     }
   };
 
@@ -195,15 +252,20 @@ export async function generateDts(data: DtsGenOptions): Promise<void> {
     {
       name,
       cwd,
-      configPath,
+      configPath: tsconfigPath,
+      tsConfigResult,
       declarationDir,
       dtsExtension,
+      redirect,
+      rootDir,
+      paths,
       banner,
       footer,
     },
     onComplete,
     bundle,
     isWatch,
+    build,
   );
 
   if (!isWatch) {

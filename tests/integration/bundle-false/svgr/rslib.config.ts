@@ -17,5 +17,8 @@ export default defineConfig({
       index: ['./src/**'],
     },
   },
-  plugins: [pluginReact(), pluginSvgr()],
+  output: {
+    target: 'web',
+  },
+  plugins: [pluginReact(), pluginSvgr({ mixedImport: true })],
 });

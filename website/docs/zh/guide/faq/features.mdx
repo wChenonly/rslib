@@ -1,1 +1,254 @@
 # 功能类问题
+
+## 样式处理
+
+### bundleless 模式如何跳过对 Less / Sass 等文件的预处理？
+
+bundleless 是指对每个源文件单独进行编译构建，可以理解为仅对源文件进行代码转换的过程。跳过对 `.less/.scss` 文件的预处理需要：
+
+1. 设置 `source.entry` 将 `.less/.scss` 文件从入口里移除。
+2. 设置 `output.copy` 将 `.less/.scss` 文件拷贝到产物目录。
+3. 设置 `redirect.style.extension` 为 `false` 禁用对 `.less/.scss` 文件导入路径的重定向行为。
+
+下面是一个跳过 `.scss` 文件处理的例子，`src` 里面所有的 `.scss` 文件都会被拷贝到产物目录下并且保留一致的相对路径。
+
+```ts title="rslib.config.ts"
+export default defineConfig({
+  lib: [
+    {
+      // ...
+      source: {
+        entry: {
+          index: ['./src/**', '!src/**/*.scss'],
+        },
+      },
+      output: {
+        copy: [{ from: '**/*.scss', context: path.join(__dirname, 'src') }],
+      },
+      redirect: {
+        style: {
+          extension: false,
+        },
+      },
+    },
+  ],
+});
+```
+
+## 静态资源处理
+
+### bundleless 模式如何跳过对静态资源文件的处理？
+
+在 bundleless 模式下，Rslib 默认会将静态资源文件转化为一个 JavaScript 文件和一个根据 [output.distPath](/config/rsbuild/output#outputdistpath) 输出的静态资源文件，并保留引用静态资源的 `import` 或 `require` 语句。跳过对静态资源文件的上述处理需要：
+
+1. 设置 `source.entry` 将静态资源文件从入口里移除。
+2. 设置 `output.copy` 将静态资源文件拷贝到产物目录。
+3. 设置 `redirect.asset.extension` 为 `false` 禁用对静态资源文件导入路径的重定向行为。
+
+下面是一个跳过 `.png` 文件处理的例子，`src` 里面所有的 `.png` 文件都会被拷贝到产物目录下并且保留一致的相对路径。
+
+```ts title="rslib.config.ts"
+export default defineConfig({
+  lib: [
+    {
+      // ...
+      source: {
+        entry: {
+          index: ['./src/**', '!src/**/*.png'],
+        },
+      },
+      output: {
+        copy: [{ from: '**/*.png', context: path.join(__dirname, 'src') }],
+      },
+      redirect: {
+        asset: {
+          extension: false,
+        },
+      },
+    },
+  ],
+});
+```
+
+## 代码压缩
+
+### 如何保留产物文件代码中的注释？
+
+默认情况下，Rslib 使用 SWC 清除注释，对应的 SWC 的 [jsc.minify.format](https://swc.rs/docs/configuration/minification#jscminifyformat) 配置为
+
+```js
+{
+    comments: 'some',
+    preserveAnnotations: true,
+}
+```
+
+这将仅保留部分 legal 注释及 annotations。如果你想保留所有注释，可以参考如下配置：
+
+```ts title="rslib.config.ts"
+export default {
+  lib: [
+    // ...
+  ],
+  output: {
+    minify: {
+      jsOptions: {
+        minimizerOptions: {
+          format: {
+            comments: 'all', // 将保留所有注释
+          },
+        },
+      },
+    },
+  },
+};
+```
+
+### 如何在保留代码可读性的同时，尽可能压缩产物体积？
+
+通过压缩代码可以减小产物体积，并提高加载速度，但是压缩后的代码可读性较差，不利于调试。如果你想保留代码可读性，可以通过如下配置，保留变量名并禁用压缩以方便调试。参考 [web-infra-dev/rsbuild#966](https://github.com/web-infra-dev/rsbuild/pull/3966).
+
+```ts title="rslib.config.ts"
+export default {
+  lib: [
+    // ...
+  ],
+  output: {
+    minify: {
+      jsOptions: {
+        minimizerOptions: {
+          // 保留变量名并禁用压缩以方便调试
+          mangle: false,
+          minify: false,
+          compress: true,
+        },
+      },
+    },
+  },
+};
+```
+
+## 类型声明文件生成
+
+### 如何避免生成某些文件的类型声明文件？
+
+如下所示，Rslib 在构建 JavaScript 产物时忽略了 `src/tests` 目录下的文件，但这些文件仍然会生成对应的类型声明文件。
+
+```ts title="rslib.config.ts"
+export default {
+  lib: [
+    source: {
+      entry: {
+        index: ['src/**/*', '!src/tests/**/*'],
+      }
+    }
+  ],
+};
+```
+
+[source.entry](/config/lib/bundle#bundle-false) 设置的入口可以排除一些文件不生成对应的 JavaScript 产物，但无法排除生成对应的类型声明文件，这需要通过在 `tsconfig.json` 中设置 [include](https://www.typescriptlang.org/tsconfig/#include) 和 [exclude](https://www.typescriptlang.org/tsconfig/#exclude) 来实现，如下所示：
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    // ...
+  },
+  "include": ["src/**/*"],
+  "exclude": ["src/tests/**/*"]
+}
+```
+
+如果你想保留对这些文件的类型提示与检查，但不生成对应的类型声明文件，可以通过 [extends](https://www.typescriptlang.org/tsconfig/#extends) 来继承一个基础的 `tsconfig.json`，然后覆盖 `include` 和 `exclude` 选项，如下所示：
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    // ...
+  },
+  "include": ["src/**/*", "rslib.config.ts"]
+}
+```
+
+```json title="tsconfig.build.json"
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // ...
+  },
+  "include": ["src/**/*"],
+  "exclude": ["src/tests/**/*"]
+}
+```
+
+新增的 `tsconfig.build.json` 需要配置在 `rslib.config.ts` 中的 [source.tsconfigPath](/config/rsbuild/source#sourcetsconfigpath) 选项中：
+
+```ts title="rslib.config.ts"
+export default {
+  lib: [
+    source: {
+      entry: {
+        index: ['src/**/*', '!src/tests/**/*'],
+      }
+    }
+  ],
+  source: {
+    tsconfigPath: 'tsconfig.build.json',
+  },
+};
+```
+
+### 如何在 `dts.bundle` 为 `true` 时额外排除指定的依赖？
+
+Rslib 通过 [rsbuild-plugin-dts](https://github.com/web-infra-dev/rslib/blob/main/packages/plugin-dts/README.md) 完成对类型声明文件的生成，该插件支持通过 [output.externals](/config/rsbuild/output#outputtarget) 进行配置，用于从打包后的类型声明文件中排除指定的依赖。
+
+举个例子：常见的 React 组件库通常不会将 `@types/react` 声明在 `peerDependencies` 中，而是仅声明在 `devDependencies`，按照 [autoExternal](/config/lib/auto-external) 处理依赖的逻辑，在打包时 Rslib 会尝试将 `@types/react` 一同打包进类型声明文件产物中，但在实践中组件库并不应该打包 `@types/react`。
+
+此时可以通过配置 [output.externals](/config/rsbuild/output#outputtarget) 来排除 `@types/react`。
+
+```ts title="rslib.config.ts"
+export default {
+  lib: [
+    // ...
+  ],
+  output: {
+    externals: ['@types/react'],
+  },
+};
+```
+
+## Rsbuild 插件
+
+### 为什么使用 `modifyRsbuildConfig` 修改配置不生效？
+
+Rslib 会在内部生成 Rsbuild 的 environments 配置，每一个 [lib](/config/lib/index) 数组中的配置项对应一个特定 environment 配置。
+
+[modifyRsbuildConfig](https://rsbuild.rs/zh/plugins/dev/hooks#modifyrsbuildconfig) 是一个全局 hook，无法对特定 environment 下的配置生效，在 Rslib 中通常用于修改全局生效的 plugins 等。因此需要使用 [modifyEnvironmentConfig](https://rsbuild.rs/zh/plugins/dev/hooks#modifyenvironmentconfig) 代替来修改特定 environment 的配置。
+
+参考 [Environment 插件](https://rsbuild.rs/zh/plugins/dev/#environment-插件) 了解如何开发一个 Environment 插件。
+
+## 其他
+
+### 如何在生成产物时保留源码中的 `__webpack_hash__` 等模块变量？
+
+Rslib 底层使用的 Rspack，在构建时会默认将 `__webpack_hash__`、`__webpack_nonce__`、`__webpack_public_path__` 等 [模块变量](https://rspack.rs/zh/api/runtime-api/module-variables) 转换为包含 `__webpack_require__` 的运行时代码。如果你需要在产物中保留这些模块变量，可以通过配置 [source.define](/config/rsbuild/source#sourcedefine) 来实现，如下所示：
+
+1. 在源码中将需要保留的模块变量替换为一个特征名称，如 `__webpack_hash__` 替换为 `WEBPACK_HASH`，`__webpack_nonce__` 替换为 `WEBPACK_NONCE`，`__webpack_public_path__` 替换为 `WEBPACK_PUBLIC_PATH` 等。
+
+```ts
+const isUpdateAvailable = () => lastCompilationHash !== __webpack_hash__; // [!code --]
+const isUpdateAvailable = () => lastCompilationHash !== WEBPACK_HASH; // [!code ++]
+```
+
+2. 在 `source.define` 中添加需要保留的模块变量，传入的配置对象的键名是源码中替换后的变量名称，值是需要在产物中保留的模块变量。
+
+```ts title="rslib.config.ts"
+export default defineConfig({
+  source: {
+    define: {
+      WEBPACK_HASH: '__webpack_hash__',
+      WEBPACK_NONCE: '__webpack_nonce__',
+      WEBPACK_PUBLIC_PATH: '__webpack_public_path__',
+    },
+  },
+});
+```

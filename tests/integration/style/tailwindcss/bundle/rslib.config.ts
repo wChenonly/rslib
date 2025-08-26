@@ -8,7 +8,7 @@ export default defineConfig({
       index: ['./src/index.ts'],
     },
   },
-  tools: {
-    lightningcssLoader: false,
+  output: {
+    target: 'web',
   },
 });

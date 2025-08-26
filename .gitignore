@@ -5,12 +5,15 @@ node_modules/
 .eslintcache
 
 dist/
-dist-types/
+dist-*/
 compiled/
 coverage/
 doc_build/
 playwright-report/
+storybook-static
 tsconfig.tsbuildinfo
+tsconfig.esm.tsbuildinfo
+tsconfig.cjs.tsbuildinfo
 test-temp-*
 test-results
 
@@ -21,3 +24,6 @@ test-results
 .nx/
 **/@mf-types
 **/@mf-types/**
+.env.local
+.env.*.local
+.rslib/**/*

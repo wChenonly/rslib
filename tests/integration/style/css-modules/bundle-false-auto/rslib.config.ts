@@ -9,7 +9,7 @@ export default defineConfig({
   ],
   source: {
     entry: {
-      index: ['../__fixtures__/basic/src/**', '!../__fixtures__/**/*.d.ts'],
+      index: ['../__fixtures__/basic/src/**'],
     },
   },
   plugins: [
@@ -20,6 +20,7 @@ export default defineConfig({
     }),
   ],
   output: {
+    target: 'web',
     cssModules: {
       auto: /\.scss/,
     },

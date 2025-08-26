@@ -1,6 +1,7 @@
+/** biome-ignore-all lint/suspicious/noTemplateCurlyInString: test statements */
 import { join } from 'node:path';
+import { expect, test } from '@rstest/core';
 import { buildAndGetResults } from 'test-helper';
-import { expect, test } from 'vitest';
 
 test('require.resolve', async () => {
   const fixturePath = join(__dirname, 'require-resolve');
@@ -18,8 +19,8 @@ test('require.resolve', async () => {
   ];
 
   const esmStatements = [
-    'import * as __WEBPACK_EXTERNAL_MODULE_node_module__ from "node:module"',
-    'const _require = (0, __WEBPACK_EXTERNAL_MODULE_node_module__.createRequire)(import.meta.url)',
+    'import { createRequire } from "node:module"',
+    'const _require = createRequire(import.meta.url)',
   ];
 
   const cjsStatements = [
@@ -47,8 +48,8 @@ test('require dynamic', async () => {
   ];
 
   const esmStatements = [
-    'import * as __WEBPACK_EXTERNAL_MODULE_node_module__ from "node:module"',
-    'const _require = (0, __WEBPACK_EXTERNAL_MODULE_node_module__.createRequire)(import.meta.url)',
+    'import { createRequire } from "node:module"',
+    'const _require = createRequire(import.meta.url)',
   ];
 
   const cjsStatements = [
@@ -88,7 +89,7 @@ test('require as expression', async () => {
   const { entries } = await buildAndGetResults({ fixturePath });
 
   const statements = [
-    'const lazyFn = (module, requireFn)=>{}',
+    'const lazyFn = (_module, _requireFn)=>{}',
     "lazyFn('./other.js', require)",
   ];
 

@@ -1,14 +1,20 @@
+#!/usr/bin/env node
+
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   type Argv,
-  type ESLintTemplateName,
   checkCancel,
   create,
+  type ESLintTemplateName,
+  multiselect,
   select,
 } from 'create-rstack';
+import { composeTemplateName, type Lang, TEMPLATES } from './helpers';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+type TemplateName = 'react' | 'node' | 'vue';
 
 async function getTemplateName({ template }: Argv) {
   if (typeof template === 'string') {
@@ -21,12 +27,15 @@ async function getTemplateName({ template }: Argv) {
     return `${template}-ts`;
   }
 
-  const type = checkCancel<string>(
+  const templateName = checkCancel<TemplateName>(
     await select({
       message: 'Select template',
       options: [
-        { value: 'node-dual', label: 'Node.js dual ESM/CJS package' },
         { value: 'node-esm', label: 'Node.js pure ESM package' },
+        { value: 'node-dual', label: 'Node.js dual ESM/CJS package' },
+        { value: 'react', label: 'React' },
+        { value: 'vue', label: 'Vue' },
+        // { value: 'universal', label: 'universal' }, // TODO: provide universal template in the future?
       ],
     }),
   );
@@ -41,7 +50,44 @@ async function getTemplateName({ template }: Argv) {
     }),
   );
 
-  return `${type}-${language}`;
+  const supportStorybook = ['react', 'vue'].includes(templateName);
+
+  type ExcludesFalse = <T>(x: T | false) => x is T;
+
+  async function selectTools() {
+    const tools = checkCancel<string[]>(
+      await multiselect({
+        message:
+          'Select development tools (Use <space> to select, <enter> to continue)',
+        required: false,
+        options: [
+          supportStorybook && {
+            value: 'storybook',
+            label: 'Storybook',
+          },
+          { value: 'rstest', label: 'Rstest' },
+          { value: 'vitest', label: 'Vitest' },
+          // TODO: support Rspress Module doc in the future
+        ].filter(Boolean as any as ExcludesFalse),
+      }),
+    );
+
+    if (tools.includes('rstest') && tools.includes('vitest')) {
+      console.error(
+        'You selected both Rstest and Vitest for testing, you should only select one of them.',
+      );
+      return selectTools();
+    }
+    return tools;
+  }
+
+  const tools = await selectTools();
+
+  return composeTemplateName({
+    template: templateName,
+    lang: language as Lang,
+    tools,
+  });
 }
 
 function mapESLintTemplate(templateName: string) {
@@ -52,7 +98,9 @@ function mapESLintTemplate(templateName: string) {
 create({
   root: path.resolve(__dirname, '..'),
   name: 'rslib',
-  templates: ['node-dual-js', 'node-dual-ts', 'node-esm-js', 'node-esm-ts'],
+  templates: TEMPLATES.map(({ template, tools, lang }) =>
+    composeTemplateName({ template, lang, tools: Object.keys(tools || {}) }),
+  ),
   getTemplateName,
   mapESLintTemplate,
 });

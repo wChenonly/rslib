@@ -1,7 +1,14 @@
 import assert from 'node:assert';
+import {
+  type ExecOptions,
+  type ExecSyncOptions,
+  exec,
+  execSync,
+} from 'node:child_process';
 import fs from 'node:fs';
-import { dirname, join, normalize } from 'node:path';
+import { basename, dirname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pluginModuleFederation } from '@module-federation/rsbuild-plugin';
 import {
   type InspectConfigResult,
   mergeRsbuildConfig as mergeConfig,
@@ -13,13 +20,25 @@ import { globContentJSON } from './helper';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+export const rslibBinPath = join(
+  __dirname,
+  '../node_modules/@rslib/core/bin/rslib.js',
+);
+
+export function runCliSync(command: string, options?: ExecSyncOptions) {
+  return execSync(`node ${rslibBinPath} ${command}`, options);
+}
+
+export function runCli(command: string, options?: ExecOptions) {
+  return exec(`node ${rslibBinPath} ${command}`, options);
+}
+
 export function getCwdByExample(exampleName: string) {
   return join(__dirname, '../../examples', exampleName);
 }
 
 export function generateBundleEsmConfig(config: LibConfig = {}): LibConfig {
   const esmBasicConfig: LibConfig = {
-    format: 'esm',
     output: {
       distPath: {
         root: './dist/esm',
@@ -43,6 +62,23 @@ export function generateBundleCjsConfig(config: LibConfig = {}): LibConfig {
   return mergeConfig(cjsBasicConfig, config)!;
 }
 
+export function generateBundleMFConfig(
+  options: Parameters<typeof pluginModuleFederation>[0],
+  config: LibConfig = {},
+): LibConfig {
+  const mfBasicConfig: LibConfig = {
+    format: 'mf',
+    output: {
+      distPath: {
+        root: './dist/mf',
+      },
+    },
+    plugins: [pluginModuleFederation(options, {})],
+  };
+
+  return mergeConfig(mfBasicConfig, config)!;
+}
+
 export function generateBundleUmdConfig(config: LibConfig = {}): LibConfig {
   const umdBasicConfig: LibConfig = {
     format: 'umd',
@@ -56,6 +92,19 @@ export function generateBundleUmdConfig(config: LibConfig = {}): LibConfig {
   return mergeConfig(umdBasicConfig, config)!;
 }
 
+export function generateBundleIifeConfig(config: LibConfig = {}): LibConfig {
+  const iifeBasicConfig: LibConfig = {
+    format: 'iife',
+    output: {
+      distPath: {
+        root: './dist/iife',
+      },
+    },
+  };
+
+  return mergeConfig(iifeBasicConfig, config)!;
+}
+
 export type FormatType = Format | `${Format}${number}`;
 type FilePath = string;
 
@@ -64,6 +113,7 @@ type BuildResult = {
   contents: Record<FormatType, Record<FilePath, string>>;
   entries: Record<FormatType, string>;
   entryFiles: Record<FormatType, FilePath>;
+  mfExposeEntry: string | undefined;
 
   rspackConfig: InspectConfigResult['origin']['bundlerConfigs'];
   rsbuildConfig: InspectConfigResult['origin']['rsbuildConfig'];
@@ -82,30 +132,35 @@ export async function getResults(
     esm: 0,
     cjs: 0,
     umd: 0,
+    mf: 0,
+    iife: 0,
   };
+  let mfExposeEntry: string | undefined;
   let key = '';
 
   const formatCount: Record<Format, number> = rslibConfig.lib.reduce(
-    (acc, { format }) => {
-      acc[format!] = (acc[format!] ?? 0) + 1;
+    (acc, { format = 'esm' }) => {
+      acc[format] = (acc[format] ?? 0) + 1;
       return acc;
     },
     {} as Record<Format, number>,
   );
 
   for (const libConfig of rslibConfig.lib) {
-    const { format } = libConfig;
-    const currentFormatCount = formatCount[format!];
-    const currentFormatIndex = formatIndex[format!]++;
+    const { format = 'esm' } = libConfig;
+    const currentFormatCount = formatCount[format];
+    const currentFormatIndex = formatIndex[format]++;
 
-    key = currentFormatCount === 1 ? format! : `${format}${currentFormatIndex}`;
+    key = currentFormatCount === 1 ? format : `${format}${currentFormatIndex}`;
 
     let globFolder = '';
     if (type === 'js' || type === 'css') {
       globFolder = libConfig?.output?.distPath?.root!;
     } else if (type === 'dts' && libConfig.dts !== false) {
       globFolder =
-        libConfig.dts?.distPath! ?? libConfig?.output?.distPath?.root!;
+        libConfig.dts === true
+          ? libConfig?.output?.distPath?.root!
+          : (libConfig.dts?.distPath! ?? libConfig?.output?.distPath?.root!);
     }
 
     if (!globFolder) continue;
@@ -139,15 +194,22 @@ export async function getResults(
     // Only applied in bundle mode, a shortcut to get single entry result
     if (libConfig.bundle !== false && fileSet.length) {
       let entryFile: string | undefined;
+      let mfExposeFile: string | undefined;
       if (fileSet.length === 1) {
         entryFile = fileSet[0];
       } else {
+        // TODO: Do not support multiple entry files yet.
         entryFile = fileSet.find((file) => file.includes('index'));
+        mfExposeFile = fileSet.find((file) => file.includes('expose'));
       }
 
       if (typeof entryFile === 'string') {
         entries[key] = content[entryFile]!;
         entryFiles[key] = normalize(entryFile);
+      }
+
+      if (typeof mfExposeFile === 'string') {
+        mfExposeEntry = content[mfExposeFile]!;
       }
     }
   }
@@ -156,26 +218,38 @@ export async function getResults(
     files,
     contents,
     entries,
+    mfExposeEntry,
     entryFiles,
   };
 }
+
+const updateConfigForTest = (rslibConfig: RslibConfig) => {
+  Object.assign(rslibConfig, {
+    performance: {
+      // Do not print file size in tests
+      printFileSize: false,
+    },
+  });
+};
 
 export async function rslibBuild({
   cwd,
   path,
   modifyConfig,
+  lib,
 }: {
   cwd: string;
   path?: string;
   modifyConfig?: (config: RslibConfig) => void;
+  lib?: string[];
 }) {
-  const rslibConfig = await loadConfig({
+  const { content: rslibConfig } = await loadConfig({
     cwd,
     path,
   });
   modifyConfig?.(rslibConfig);
   process.chdir(cwd);
-  const rsbuildInstance = await build(rslibConfig);
+  const rsbuildInstance = await build(rslibConfig, { lib });
   return { rsbuildInstance, rslibConfig };
 }
 
@@ -183,6 +257,7 @@ export async function buildAndGetResults(options: {
   fixturePath: string;
   configPath?: string;
   type: 'all';
+  lib?: string[];
 }): Promise<{
   js: BuildResult;
   dts: BuildResult;
@@ -192,19 +267,24 @@ export async function buildAndGetResults(options: {
   fixturePath: string;
   configPath?: string;
   type?: 'js' | 'dts' | 'css';
+  lib?: string[];
 }): Promise<BuildResult>;
 export async function buildAndGetResults({
   fixturePath,
   configPath,
   type = 'js',
+  lib,
 }: {
   fixturePath: string;
   configPath?: string;
   type?: 'js' | 'dts' | 'css' | 'all';
+  lib?: string[];
 }) {
   const { rsbuildInstance, rslibConfig } = await rslibBuild({
     cwd: fixturePath,
     path: configPath,
+    modifyConfig: updateConfigForTest,
+    lib,
   });
   const {
     origin: { bundlerConfigs, rsbuildConfig },
@@ -243,13 +323,13 @@ export async function buildAndGetResults({
       },
     };
   }
-
   const results = await getResults(rslibConfig, type);
   return {
     contents: results.contents,
     files: results.files,
     entries: results.entries,
     entryFiles: results.entryFiles,
+    mfExposeEntry: results.mfExposeEntry,
     rspackConfig: bundlerConfigs,
     rsbuildConfig: rsbuildConfig,
     isSuccess: Boolean(rsbuildInstance),
@@ -287,4 +367,69 @@ export function getFileBySuffix(
   const content = files[fileName];
   assert(content);
   return content;
+}
+
+export function queryContent(
+  contents: Record<string, string>,
+  query: string | RegExp,
+  options: {
+    basename?: boolean;
+  } = {},
+): { path: string; content: string } {
+  const useBasename = options?.basename ?? false;
+  const matched = Object.entries(contents).find(([key]) => {
+    const toQueried = useBasename ? basename(key) : key;
+    return typeof query === 'string'
+      ? toQueried === query
+      : query.test(toQueried);
+  });
+
+  if (!matched) {
+    throw new Error(`Cannot find content for ${query}`);
+  }
+
+  return { path: matched[0], content: matched[1] };
+}
+
+export async function createTempFiles(
+  fixturePath: string,
+  bundle: boolean,
+): Promise<string[]> {
+  const checkFile: string[] = [];
+
+  const tempDirCjs = join(fixturePath, 'dist-types', 'cjs');
+  const tempDirEsm = join(fixturePath, 'dist-types', 'esm');
+  const tempFileCjs = join(tempDirCjs, 'tempFile.d.ts');
+  const tempFileEsm = join(tempDirEsm, 'tempFile.d.ts');
+
+  await fs.promises.mkdir(tempDirCjs, { recursive: true });
+  await fs.promises.mkdir(tempDirEsm, { recursive: true });
+
+  await fs.promises.writeFile(tempFileCjs, 'console.log("temp file for cjs");');
+  await fs.promises.writeFile(tempFileEsm, 'console.log("temp file for esm");');
+
+  checkFile.push(tempFileCjs, tempFileEsm);
+
+  if (bundle) {
+    const tempDirRslib = join(fixturePath, '.rslib', 'declarations', 'cjs');
+    const tempDirRslibEsm = join(fixturePath, '.rslib', 'declarations', 'esm');
+    const tempFileRslibCjs = join(tempDirRslib, 'tempFile.d.ts');
+    const tempFileRslibEsm = join(tempDirRslibEsm, 'tempFile.d.ts');
+
+    await fs.promises.mkdir(tempDirRslib, { recursive: true });
+    await fs.promises.mkdir(tempDirRslibEsm, { recursive: true });
+
+    await fs.promises.writeFile(
+      tempFileRslibCjs,
+      'console.log("temp file for cjs");',
+    );
+    await fs.promises.writeFile(
+      tempFileRslibEsm,
+      'console.log("temp file for esm");',
+    );
+
+    checkFile.push(tempFileRslibCjs, tempFileRslibEsm);
+  }
+
+  return checkFile;
 }

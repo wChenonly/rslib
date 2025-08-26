@@ -1,11 +1,11 @@
 {
   "name": "create-rslib",
-  "version": "0.0.13",
+  "version": "0.12.2",
   "description": "Create a new Rslib project",
-  "homepage": "https://lib.rsbuild.dev",
+  "homepage": "https://rslib.rs",
   "repository": {
     "type": "git",
-    "url": "https://github.com/web-infra-dev/rslib",
+    "url": "git+https://github.com/web-infra-dev/rslib.git",
     "directory": "packages/create-rslib"
   },
   "license": "MIT",
@@ -15,36 +15,37 @@
   },
   "main": "./dist/index.js",
   "bin": {
-    "create-rslib": "./bin.js"
+    "create-rslib": "./dist/index.js"
   },
   "files": [
     "template-*",
-    "dist",
-    "bin.js"
+    "dist"
   ],
   "scripts": {
     "build": "rslib build",
     "dev": "rslib build --watch",
-    "start": "node ./dist/index.js"
+    "generate-templates": "pnpm tsx ./src/genTemplates.ts",
+    "start": "node ./dist/index.js",
+    "test": "rstest"
   },
   "dependencies": {
-    "create-rstack": "1.0.7"
+    "create-rstack": "1.5.6"
   },
   "devDependencies": {
-    "@rslib/core": "workspace:*",
     "@rslib/tsconfig": "workspace:*",
     "@types/fs-extra": "^11.0.4",
-    "@types/node": "~18.19.39",
-    "fs-extra": "^11.2.0",
-    "rslib": "npm:@rslib/core@0.0.13",
-    "typescript": "^5.6.3"
+    "@types/node": "^22.17.2",
+    "fs-extra": "^11.3.1",
+    "rsbuild-plugin-publint": "^0.3.3",
+    "rslib": "npm:@rslib/core@0.12.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
   },
   "engines": {
-    "node": ">=16.7.0"
+    "node": ">=18.12.0"
   },
   "publishConfig": {
     "access": "public",
-    "provenance": true,
     "registry": "https://registry.npmjs.org/"
   }
 }

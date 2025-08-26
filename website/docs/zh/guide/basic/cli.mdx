@@ -1,1 +1,117 @@
 # 命令行工具
+
+Rslib 内置了一个轻量级的命令行工具，包含 [rslib build](#rslib-build)、[rslib inspect](#rslib-inspect) 等命令。
+
+## 查看所有命令
+
+如果你需要查看所有可用的 CLI 命令，请在项目目录中运行以下命令：
+
+```bash
+npx rslib -h
+```
+
+输出如下：
+
+```bash
+Usage:
+  $ rslib <command> [options]
+
+Commands:
+  build    构建用于生产环境的产物
+  inspect  检查 Rslib 项目的 Rsbuild 配置和 Rspack 配置
+  mf-dev   为 Module Federation 格式的库启用 Rsbuild 开发服务器
+```
+
+## 公共选项
+
+Rslib CLI 提供了一些公共选项，可以用于所有命令：
+
+| 选项                    | 描述                                                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `-c, --config <config>` | 指定配置文件路径，可以为相对路径或绝对路径，详见 [指定配置文件](/guide/basic/configure-rslib#指定配置文件)                |
+| `--env-dir <dir>`       | 指定目录来加载 `.env` 文件，详见 [Rsbuild - Env 目录](https://rsbuild.rs/zh/guide/advanced/env-vars#env-目录)             |
+| `--env-mode <mode>`     | 指定 env 模式来加载 `.env.[mode]` 文件，详见 [Rsbuild - Env 模式](https://rsbuild.rs/zh/guide/advanced/env-vars#env-模式) |
+| `-h, --help`            | 显示命令帮助                                                                                                              |
+| `--lib <id>`            | 指定运行命令的库（可重复，例如：`--lib esm --lib cjs`），查看 [lib.id](/config/lib/id) 了解如何获取或设置库的 ID          |
+| `-r, --root <root>`     | 指定项目根目录，可以是绝对路径或者相对于 cwd 的路径                                                                       |
+
+## rslib build
+
+`rslib build` 命令默认会在 `dist/` 目录下输出构建产物。
+
+```bash
+Usage:
+  $ rslib build
+
+Options:
+  -w --watch            开启 watch 模式, 监听文件变更并重新构建
+```
+
+### 环境变量
+
+Rslib 支持在构建过程中向代码中注入环境变量或表达式，这对于区分运行环境、替换常量值等场景很有帮助。
+
+你可以查看 [Rsbuild - 环境变量](https://rsbuild.rs/zh/guide/advanced/env-vars) 了解更多详细信息。
+
+::: note
+
+- 当 [format](/config/lib/format) 设置为 `esm` 或 `cjs` 时，`process.env.NODE_ENV` 会在构建产物中被保留。
+- 当 [format](/config/lib/format) 设置为 `mf` 或 `umd` 时，`process.env.NODE_ENV` 将被替换，以确保构建产物可以在浏览器中运行。
+
+:::
+
+## rslib inspect
+
+`rslib inspect` 命令用于查看 Rslib 项目的 Rsbuild 配置和 Rspack 配置。
+
+```bash
+Usage:
+  $ rslib inspect
+
+Options:
+  --output <output>     指定检查内容输出路径（默认：".rsbuild"）
+  --verbose             在输出中显示完整的函数定义
+```
+
+当你在项目根目录下执行命令 `npx rsbuild inspect` 后，会在项目的 `dist/.rsbuild` 目录生成以下文件：
+
+- `rsbuild.config.mjs`: 表示在构建时使用的 Rsbuild 配置。
+- `rspack.config.web.mjs`: 表示在构建时使用的 Rspack 配置。
+
+```text
+➜ npx rslib inspect
+
+Inspect config succeed, open following files to view the content:
+
+  - Rsbuild Config: /project/dist/.rsbuild/rsbuild.config.mjs
+  - Rspack Config (esm): /project/dist/.rsbuild/rspack.config.esm.mjs
+```
+
+### 完整内容
+
+默认情况下，inspect 命令会省略配置对象中的函数内容，你可以添加 `--verbose` 选项来输出函数的完整内容：
+
+```bash
+rslib inspect --verbose
+```
+
+### 多种输出格式
+
+如果当前项目同时有多种输出格式，比如 ESM 产物和 CJS 产物，那么会在 `dist/.rsbuild` 目录生成多份 Rspack 配置文件。
+
+```text
+➜ npx rslib inspect
+
+Inspect config succeed, open following files to view the content:
+
+  - Rsbuild Config (esm): /project/dist/.rsbuild/rsbuild.config.esm.mjs
+  - Rsbuild Config (cjs): /project/dist/.rsbuild/rsbuild.config.cjs.mjs
+  - Rspack Config (esm): /project/dist/.rsbuild/rspack.config.esm.mjs
+  - Rspack Config (cjs): /project/dist/.rsbuild/rspack.config.cjs.mjs
+```
+
+## rslib mf-dev
+
+`rslib mf-dev` 命令用于为 [Module Federation](/guide/advanced/module-federation) 格式的库启用 Rsbuild 开发服务器。
+
+这允许你在 host 应用中访问和调试 mf 格式的模块。

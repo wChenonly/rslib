@@ -1,4 +1,4 @@
-import { type LibConfig, defineConfig } from '@rslib/core';
+import { defineConfig, type LibConfig } from '@rslib/core';
 import { generateBundleCjsConfig, generateBundleEsmConfig } from 'test-helper';
 
 const bannerFooterConfig: LibConfig = {
@@ -51,10 +51,9 @@ export default defineConfig({
       dts: {
         bundle: false,
       },
-      // TODO: bundleless css
       source: {
         entry: {
-          index: ['./src/**/*.ts'],
+          index: ['./src/**'],
         },
       },
       ...bannerFooterConfig,
@@ -70,10 +69,9 @@ export default defineConfig({
       dts: {
         bundle: false,
       },
-      // TODO: bundleless css
       source: {
         entry: {
-          index: ['./src/**/*.ts'],
+          index: ['./src/**'],
         },
       },
       ...bannerFooterConfig,
@@ -96,5 +94,8 @@ export default defineConfig({
     entry: {
       index: './src/index.ts',
     },
+  },
+  output: {
+    target: 'web',
   },
 });

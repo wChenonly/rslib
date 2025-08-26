@@ -1,25 +1,30 @@
 import { join } from 'node:path';
+import { expect, test } from '@rstest/core';
 import stripAnsi from 'strip-ansi';
-import { buildAndGetResults, proxyConsole } from 'test-helper';
-import { expect, test } from 'vitest';
+import { buildAndGetResults, proxyConsole, queryContent } from 'test-helper';
+
 import { composeModuleImportWarn } from '../../../packages/core/src/config';
 
 test('should fail to build when `output.target` is not "node"', async () => {
   const fixturePath = join(__dirname, 'browser');
+  const { restore } = proxyConsole();
   const build = buildAndGetResults({ fixturePath });
-  await expect(build).rejects.toThrowError('Rspack build failed!');
+  await expect(build).rejects.toThrowError('Rspack build failed.');
+  restore();
 });
 
 test('auto externalize Node.js built-in modules when `output.target` is "node"', async () => {
   const fixturePath = join(__dirname, 'node');
+  const { restore } = proxyConsole();
   const { entries } = await buildAndGetResults({ fixturePath });
+  restore();
 
   for (const external of [
-    'import * as __WEBPACK_EXTERNAL_MODULE_fs__ from "fs"',
-    'import * as __WEBPACK_EXTERNAL_MODULE_node_assert__ from "node:assert"',
-    'import * as __WEBPACK_EXTERNAL_MODULE_react__ from "react"',
     'import * as __WEBPACK_EXTERNAL_MODULE_bar__ from "bar"',
-    'module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("foo");',
+    'import { createRequire as __WEBPACK_EXTERNAL_createRequire } from "node:module"',
+    'import fs from "fs"',
+    'import node_assert from "node:assert"',
+    'import react from "react"',
   ]) {
     expect(entries.esm).toContain(external);
   }
@@ -40,6 +45,7 @@ test('should get warn when use require in ESM', async () => {
   const fixturePath = join(__dirname, 'module-import-warn');
   const { entries } = await buildAndGetResults({ fixturePath });
   const logStrings = logs.map((log) => stripAnsi(log));
+  const issuer = join(fixturePath, 'src/index.ts');
 
   for (const external of [
     'import * as __WEBPACK_EXTERNAL_MODULE_bar__ from "bar";',
@@ -51,7 +57,7 @@ test('should get warn when use require in ESM', async () => {
   for (const external of ['foo', 'bar', 'qux']) {
     expect(
       logStrings.some((l) =>
-        l.includes(stripAnsi(composeModuleImportWarn(external))),
+        l.includes(stripAnsi(composeModuleImportWarn(external, issuer))),
       ),
     ).toBe(true);
   }
@@ -59,10 +65,51 @@ test('should get warn when use require in ESM', async () => {
   for (const external of ['./baz', 'quxx']) {
     expect(
       logStrings.some((l) =>
-        l.includes(stripAnsi(composeModuleImportWarn(external))),
+        l.includes(stripAnsi(composeModuleImportWarn(external, issuer))),
       ),
     ).toBe(false);
   }
 
   restore();
+});
+
+test('require ESM from CJS', async () => {
+  const fixturePath = join(__dirname, 'node');
+  const { restore } = proxyConsole();
+  const { entryFiles } = await buildAndGetResults({ fixturePath });
+  restore();
+  const baz = (await import(entryFiles.cjs)).baz;
+  const bazValue = await baz();
+  expect(bazValue).toBe('baz');
+});
+
+test('user externals', async () => {
+  // Ensure the priority of user externals higher than others.
+  // - "memfs": userExternalsConfig > targetExternalsConfig
+  // - "lodash-es/zip": userExternalsConfig > autoExternalConfig
+  // - "./foo2": userExternalsConfig > bundlelessExternalConfig
+
+  const fixturePath = join(__dirname, 'user-externals');
+  const { entries, contents } = await buildAndGetResults({ fixturePath });
+  expect(entries.esm0).toMatchInlineSnapshot(
+    `
+    "import node_fs from "node:fs";
+    import lodash from "lodash";
+    import zip from "lodash/zip";
+    const foo = 'foo';
+    console.log(node_fs, lodash.add, zip, foo);
+    "
+  `,
+  );
+
+  expect(
+    queryContent(contents.esm1!, 'index.js', { basename: true }).content,
+  ).toMatchInlineSnapshot(`
+    "import node_fs from "node:fs";
+    import lodash from "lodash";
+    import zip from "lodash/zip";
+    import { foo } from "./foo2";
+    console.log(node_fs, lodash.add, zip, foo);
+    "
+  `);
 });
